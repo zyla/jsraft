@@ -84,6 +84,17 @@ class OVar<T> {
     }, 0);
   }
 
+  // Wait for the next change
+  wait(): Promise<void> {
+    return new Promise(resolve => {
+      const l = (v: T) => {
+        this.removeListener(l);
+        resolve();
+      };
+      this.addListener(l);
+    });
+  }
+
   waitFor(predicate: (v: T) => boolean): Promise<void> {
     return new Promise(resolve => {
       if(predicate(this.get())) {
@@ -117,6 +128,8 @@ type Config = {
   myAddress: Address;
 
   heartbeatInterval: number;
+  minElectionTimeout: number;
+  maxElectionTimeout: number;
 
   logger: debug.Debugger;
 };
@@ -151,16 +164,18 @@ type Response<Request> =
     term: Term;
     success: boolean;
   } :
-  "lol";
+  never;
 
 // A raft instance.
 class Raft {
   private isLeader = new OVar(false);
   private logSize = new OVar(0);
+  private leaderContact = new OVar<null>(null);
   private matchIndex = new Map<Address, LogIndex>();
   private currentTerm: Term = 0;
   private log: LogEntry[] = [];
   private commitIndex: LogIndex = 0;
+  private votedFor: Address | null = null;
 
   constructor(private config: Config) {
     this.transport.setReceiver(this);
@@ -176,6 +191,10 @@ class Raft {
 
   private get me() {
     return this.config.myAddress;
+  }
+
+  private get peers() {
+    return this.config.servers.filter(s => s !== this.me);
   }
 
   // Returns current matchIndex for the given peer, or -1 if there's none.
@@ -201,11 +220,8 @@ class Raft {
   /// Logic
   
   start() {
-    for(const server of this.config.servers) {
-      if(server === this.me) {
-        continue;
-      }
-      this.replicationTask(server);
+    for(const peer of this.peers) {
+      this.replicationTask(peer);
     }
     this.electionTask();
   }
@@ -279,13 +295,86 @@ class Raft {
   }
 
   private async electionTask() {
+    const debug = this.debug.extend('electionTask');
+
     while(true) {
       await this.isLeader.waitFor(isLeader => !isLeader);
+      const result = await Promise.race([
+        delay(randomInRange(this.config.minElectionTimeout, this.config.maxElectionTimeout)).then(() => 'timeout'),
+        this.leaderContact.wait().then(() => 'continue'),
+        this.isLeader.waitFor(isLeader => isLeader).then(() => 'continue'),
+      ]);
+      if(result === 'continue') {
+        continue;
+      }
+
+      const term = ++this.currentTerm;
+      const neededVotes = Math.floor(this.config.servers.length / 2) + 1;
+      const numVotes = new OVar(1);
+      const abort = new OVar(null);
+
+      debug("starting election for term %d, need %d votes", term, neededVotes);
+
+      for(const peer of this.peers) {
+        (async () => {
+          const response = await this.rpc(peer, {
+            type: "RequestVote",
+            term,
+            lastLogIndex: this.log.length - 1,
+            lastLogTerm: this.log.length > 0 ? this.log[this.log.length - 1][0] : -1,
+          });
+          if(response.term > term) {
+            this.updateTerm(response.term);
+            abort.set(null);
+            return;
+          }
+          if(response.granted) {
+            debug("vote granted by %s", peer);
+            numVotes.set(numVotes.get() + 1);
+          }
+        })();
+      }
+
+      await Promise.race([
+        numVotes.waitFor(nv => nv >= neededVotes),
+        abort.wait(),
+        this.leaderContact.wait(),
+      ]);
+
+      if(this.currentTerm === term && numVotes.get() >= neededVotes) {
+        debug("got needed votes, becoming leader");
+        this.matchIndex.clear();
+        this.isLeader.set(true);
+      } else {
+        debug("oops");
+      }
     }
   }
 
   // The real RPC handler, appropriately typed.
-  private handleRequest<Req extends Request>(from: Address, request: Req): Promise<Response<Req>> {
-    throw new Error('nope');
+  private handleRequest(from: Address, request: Request): Promise<Response<typeof request>> {
+    if(request.type === "RequestVote") {
+      return this.handleRequestVote(from, request);
+    } else if(request.type === "AppendEntries") {
+      return this.handleAppendEntries(from, request);
+    } else {
+      throw new Error("Invalid request type");
+    }
   }
+
+  private handleRequestVote(from: Address, request: RequestVote): Promise<Response<RequestVote>> {
+    if(request.term > term) {
+      this.updateTerm(request.term);
+    }
+
+    throw new Error('unimplemented');
+  }
+
+  private handleAppendEntries(from: Address, request: AppendEntries): Promise<Response<AppendEntries>> {
+    throw new Error('unimplemented');
+  }
+}
+
+function randomInRange(lo: number, hi: number): number {
+  return lo + (Math.random() * (hi - lo));
 }
