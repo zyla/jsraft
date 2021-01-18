@@ -1,0 +1,14 @@
+version: '2.1'
+
+services:
+  dev:
+    build: ./.docker
+    command: dumb-init sleep infinity
+    volumes:
+      - .:/app
+      - dev-home:/home
+    working_dir: /app
+    mem_limit: 1G
+
+volumes:
+  dev-home:
