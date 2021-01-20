@@ -1,12 +1,11 @@
 import debug from 'debug';
+import OVar from './observable';
 
 type Address = string;
 type Json = any;
 type Term = number;
 type LogIndex = number;
 type Payload = string;
-
-const setTimeout = (this as any).setTimeout;
 
 // Transport doesn't know about message types, operates on opaque JSON objects.
 interface Transport {
@@ -50,65 +49,6 @@ class MemNetwork {
     for(const addr of addrs) {
       this.nodes.set(addr, new MemTransport(this, addr));
     }
-  }
-}
-
-/// OVar - "observable variable"
-
-class OVar<T> {
-  private listeners: ((v: T) => void)[] = [];
-
-  constructor(private value: T) {}
-
-  addListener(l: (v: T) => void) {
-    this.listeners.push(l);
-  }
-
-  removeListener(l: (v: T) => void) {
-    const i = this.listeners.indexOf(l);
-    if(i !== -1) {
-      this.listeners.splice(i, 1);
-    }
-  }
-
-  get() {
-    return this.value;
-  }
-
-  set(v: T) {
-    this.value = v;
-    setTimeout(() => {
-      for(const l of this.listeners) {
-        l(v);
-      }
-    }, 0);
-  }
-
-  // Wait for the next change
-  wait(): Promise<void> {
-    return new Promise(resolve => {
-      const l = () => {
-        this.removeListener(l);
-        resolve();
-      };
-      this.addListener(l);
-    });
-  }
-
-  waitFor(predicate: (v: T) => boolean): Promise<void> {
-    return new Promise(resolve => {
-      if(predicate(this.get())) {
-        resolve();
-        return;
-      }
-      const l = (v: T) => {
-        if(predicate(v)) {
-          this.removeListener(l);
-          resolve();
-        }
-      };
-      this.addListener(l);
-    });
   }
 }
 

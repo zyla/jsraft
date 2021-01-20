@@ -1,4 +1,4 @@
 node_modules/
 public/bundle.js
 public/main.css
-index.js
+src/*.js

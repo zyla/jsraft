@@ -2,9 +2,10 @@
   "private": true,
   "scripts": {
     "watch": "tsc --watch --project tsconfig.json",
-    "lint": "eslint index.ts"
+    "lint": "eslint src"
   },
   "devDependencies": {
+    "@types/node": "^14.14.22",
     "@typescript-eslint/eslint-plugin": "^4.14.0",
     "@typescript-eslint/parser": "^4.14.0",
     "eslint": "^7.18.0",
