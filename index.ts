@@ -136,6 +136,9 @@ type Config = {
 
 type LogEntry = [Term, Payload];
 
+const TERM = 0;
+const PAYLOAD = 1;
+
 type RequestVote = {
   type: "RequestVote";
   term: Term;
@@ -168,7 +171,7 @@ type Response<Request> =
 
 // A raft instance.
 class Raft {
-  private isLeader = new OVar(false);
+  private leader = new OVar<Address | null>(null);
   private logSize = new OVar(0);
   private leaderContact = new OVar<null>(null);
   private matchIndex = new Map<Address, LogIndex>();
@@ -197,6 +200,18 @@ class Raft {
     return this.config.servers.filter(s => s !== this.me);
   }
 
+  private waitUntilBecomingLeader() {
+    return this.leader.waitFor(l => l === this.me);
+  }
+
+  private waitUntilBecomingNonLeader() {
+    return this.leader.waitFor(l => l != this.me);
+  }
+
+  private get isLeader() {
+    return this.leader.get() === this.me;
+  }
+
   // Returns current matchIndex for the given peer, or -1 if there's none.
   private getMatchIndex(peer: Address): LogIndex {
     const index = this.matchIndex.get(peer);
@@ -205,7 +220,7 @@ class Raft {
 
   // Returns log term for the given log index, or -1 if there's none.
   private getLogTerm(index: LogIndex): Term {
-    return index >= 0 && index < this.log.length ? this.log[index][0] : -1;
+    return index >= 0 && index < this.log.length ? this.log[index][TERM] : -1;
   }
 
   private rpc<Req extends Request>(to: Address, request: Req): Promise<Response<Req>> {
@@ -228,16 +243,13 @@ class Raft {
 
   private async replicationTask(peer: Address) {
     while(true) {
-      await this.isLeader.waitFor(isLeader => isLeader);
+      await this.waitUntilBecomingLeader();
       while(this.isLeader) {
-        const steppedDown = this.isLeader.waitFor(isLeader => !isLeader);
-
         await this.sendEntries(peer);
 
         await Promise.race([
           delay(this.config.heartbeatInterval),
-          steppedDown,
-
+          this.waitUntilBecomingNonLeader(),
           // FIXME: this leaks subscribers
           this.logSize.waitFor(logSize => logSize > this.getMatchIndex(peer)),
         ]);
@@ -284,13 +296,22 @@ class Raft {
   private updateTerm(newTerm: Term) {
     if(newTerm > this.currentTerm) {
       this.debug('our term is stale (%d > %d)', newTerm, this.currentTerm);
-
-      // Warning: updating currentTerm and isLeader has to be atomic!
-      this.currentTerm = newTerm;
-      if(this.isLeader.get()) {
+      if(this.isLeader) {
         this.debug('stepping down');
-        this.isLeader.set(false);
       }
+
+      // Warning: updating currentTerm, votedFor and leader has to be atomic!
+      this.currentTerm = newTerm;
+      this.votedFor = null;
+      this.leader.set(null);
+    }
+  }
+
+  private updateCommitIndex(commitIndex: LogIndex) {
+    if(commitIndex > this.commitIndex) {
+      this.commitIndex = commitIndex;
+
+      // TODO: notify commit listeners
     }
   }
 
@@ -298,57 +319,65 @@ class Raft {
     const debug = this.debug.extend('electionTask');
 
     while(true) {
-      await this.isLeader.waitFor(isLeader => !isLeader);
+      await this.waitUntilBecomingNonLeader();
       const result = await Promise.race([
         delay(randomInRange(this.config.minElectionTimeout, this.config.maxElectionTimeout)).then(() => 'timeout'),
         this.leaderContact.wait().then(() => 'continue'),
-        this.isLeader.waitFor(isLeader => isLeader).then(() => 'continue'),
+        this.waitUntilBecomingLeader().then(() => 'continue'),
       ]);
       if(result === 'continue') {
         continue;
       }
 
-      const term = ++this.currentTerm;
-      const neededVotes = Math.floor(this.config.servers.length / 2) + 1;
-      const numVotes = new OVar(1);
-      const abort = new OVar(null);
+      while(!this.leader.get()) {
+        const term = ++this.currentTerm;
+        this.votedFor = this.me;
+        const neededVotes = Math.floor(this.config.servers.length / 2) + 1;
+        const numVotes = new OVar(1);
+        const abort = new OVar(null);
 
-      debug("starting election for term %d, need %d votes", term, neededVotes);
+        debug("starting election for term %d, need %d votes", term, neededVotes);
 
-      for(const peer of this.peers) {
-        (async () => {
-          const response = await this.rpc(peer, {
-            type: "RequestVote",
-            term,
-            lastLogIndex: this.log.length - 1,
-            lastLogTerm: this.log.length > 0 ? this.log[this.log.length - 1][0] : -1,
-          });
-          if(response.term > term) {
-            this.updateTerm(response.term);
-            abort.set(null);
-            return;
-          }
-          if(response.granted) {
-            debug("vote granted by %s", peer);
-            numVotes.set(numVotes.get() + 1);
-          }
-        })();
-      }
+        for(const peer of this.peers) {
+          (async () => {
+            const response = await this.rpc(peer, {
+              type: "RequestVote",
+              term,
+              lastLogIndex: this.log.length - 1,
+              lastLogTerm: this.log.length > 0 ? this.log[this.log.length - 1][TERM] : -1,
+            });
+            if(response.term > term) {
+              this.updateTerm(response.term);
+              abort.set(null);
+              return;
+            }
+            if(response.granted) {
+              debug("vote granted by %s", peer);
+              numVotes.set(numVotes.get() + 1);
+            }
+          })();
+        }
 
-      await Promise.race([
-        numVotes.waitFor(nv => nv >= neededVotes),
-        abort.wait(),
-        this.leaderContact.wait(),
-      ]);
+        await Promise.race([
+          numVotes.waitFor(nv => nv >= neededVotes),
+          abort.wait(),
+          this.leaderContact.wait(),
+          delay(randomInRange(this.config.minElectionTimeout, this.config.maxElectionTimeout)),
+        ]);
 
-      if(this.currentTerm === term && numVotes.get() >= neededVotes) {
-        debug("got needed votes, becoming leader");
-        this.matchIndex.clear();
-        this.isLeader.set(true);
-      } else {
-        debug("oops");
+        if(this.currentTerm === term && numVotes.get() >= neededVotes) {
+          debug("got needed votes, becoming leader");
+          this.becomeLeader();
+        } else {
+          debug("election failed, retrying");
+        }
       }
     }
+  }
+
+  private becomeLeader() {
+    this.matchIndex.clear();
+    this.leader.set(this.me);
   }
 
   // The real RPC handler, appropriately typed.
@@ -362,16 +391,80 @@ class Raft {
     }
   }
 
-  private handleRequestVote(from: Address, request: RequestVote): Promise<Response<RequestVote>> {
-    if(request.term > term) {
+  private async handleRequestVote(from: Address, request: RequestVote): Promise<Response<RequestVote>> {
+    if(request.term > this.currentTerm) {
       this.updateTerm(request.term);
     }
 
-    throw new Error('unimplemented');
+    if(request.term < this.currentTerm) {
+      return {
+        term: this.currentTerm,
+        granted: false,
+      };
+    }
+
+    if(!this.votedFor || this.votedFor === from) {
+      this.votedFor = from;
+      // TODO: save to stable storage
+
+      return {
+        term: this.currentTerm,
+        granted: true,
+      };
+    } else {
+      return {
+        term: this.currentTerm,
+        granted: false,
+      };
+    }
   }
 
-  private handleAppendEntries(from: Address, request: AppendEntries): Promise<Response<AppendEntries>> {
-    throw new Error('unimplemented');
+  private async handleAppendEntries(from: Address, request: AppendEntries): Promise<Response<AppendEntries>> {
+    if(request.term > this.currentTerm) {
+      this.updateTerm(request.term);
+    }
+
+    if(request.term < this.currentTerm) {
+      return {
+        term: this.currentTerm,
+        success: false,
+      };
+    }
+
+    if(!this.leader.get()) {
+      this.leader.set(from);
+    }
+
+    if(request.prevLogIndex > 0 && (request.prevLogIndex >= this.log.length || request.prevLogTerm !== this.log[request.prevLogIndex][TERM])) {
+      this.debug("our log doesn't match leader %s at index %d", from, request.prevLogIndex);
+      return {
+        term: this.currentTerm,
+        success: false,
+      };
+    }
+
+    this.leaderContact.set(null);
+
+    for(let i = 0; i < request.entries.length; i++) {
+      const targetIndex = request.prevLogIndex + 1 + i;
+
+      if(targetIndex < this.log.length && this.log[targetIndex][TERM] !== request.entries[i][TERM]) {
+        this.debug("discarding log entries starting from %d", targetIndex);
+        this.log.splice(targetIndex);
+        // TODO: notify listeners that entries were discarded
+      }
+
+      if(targetIndex >= this.log.length) {
+        this.log.push(request.entries[i]);
+      }
+    }
+
+    this.updateCommitIndex(request.leaderCommit);
+
+    return {
+      term: this.currentTerm,
+      success: true,
+    };
   }
 }
 
