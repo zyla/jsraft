@@ -87,7 +87,7 @@ class OVar<T> {
   // Wait for the next change
   wait(): Promise<void> {
     return new Promise(resolve => {
-      const l = (v: T) => {
+      const l = () => {
         this.removeListener(l);
         resolve();
       };
@@ -120,7 +120,7 @@ function delay(ms: number): Promise<void> {
 
 /// Main raft code
 
-type Config = {
+export type Config = {
   transport: Transport;
 
   // Servers in the cluster, including ourselves
@@ -134,12 +134,12 @@ type Config = {
   logger: debug.Debugger;
 };
 
-type LogEntry = [Term, Payload];
+export type LogEntry = [Term, Payload];
 
-const TERM = 0;
-const PAYLOAD = 1;
+export const TERM = 0;
+export const PAYLOAD = 1;
 
-type RequestVote = {
+export type RequestVote = {
   type: "RequestVote";
   term: Term;
 
@@ -147,7 +147,7 @@ type RequestVote = {
   lastLogTerm: Term;
 };
 
-type AppendEntries = {
+export type AppendEntries = {
   type: "AppendEntries";
   term: Term;
   prevLogIndex: LogIndex;
@@ -156,9 +156,9 @@ type AppendEntries = {
   leaderCommit: LogIndex;
 };
 
-type Request = RequestVote | AppendEntries;
+export type Request = RequestVote | AppendEntries;
 
-type Response<Request> =
+export type Response<Request> =
   Request extends RequestVote ? {
     term: Term;
     granted: boolean;
@@ -170,7 +170,7 @@ type Response<Request> =
   never;
 
 // A raft instance.
-class Raft {
+export class Raft {
   private leader = new OVar<Address | null>(null);
   private logSize = new OVar(0);
   private leaderContact = new OVar<null>(null);
@@ -234,7 +234,7 @@ class Raft {
 
   /// Logic
   
-  start() {
+  start(): void {
     for(const peer of this.peers) {
       this.replicationTask(peer);
     }
