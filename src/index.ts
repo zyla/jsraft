@@ -1,5 +1,5 @@
-import debug from 'debug';
-import OVar from './observable';
+import debug from "debug";
+import OVar from "./observable";
 
 type Address = string;
 type Json = any;
@@ -35,8 +35,8 @@ class MemTransport {
 
   rpc(to: Address, request: Json): Promise<Json> {
     const otherNode = this.net.nodes.get(to);
-    if(!otherNode) {
-      throw new TransportError('unknown_address');
+    if (!otherNode) {
+      throw new TransportError("unknown_address");
     }
     return otherNode.receiver.handleMessage(this.myAddress, request);
   }
@@ -46,7 +46,7 @@ class MemNetwork {
   public nodes: Map<Address, MemTransport> = new Map();
 
   constructor(addrs: Address[]) {
-    for(const addr of addrs) {
+    for (const addr of addrs) {
       this.nodes.set(addr, new MemTransport(this, addr));
     }
   }
@@ -55,7 +55,7 @@ class MemNetwork {
 /// delay
 
 function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /// Main raft code
@@ -92,22 +92,23 @@ export type AppendEntries = {
   term: Term;
   prevLogIndex: LogIndex;
   prevLogTerm: Term;
-  entries: LogEntry[],
+  entries: LogEntry[];
   leaderCommit: LogIndex;
 };
 
 export type Request = RequestVote | AppendEntries;
 
-export type Response<Request> =
-  Request extends RequestVote ? {
-    term: Term;
-    granted: boolean;
-  } :
-  Request extends AppendEntries ? {
-    term: Term;
-    success: boolean;
-  } :
-  never;
+export type Response<Request> = Request extends RequestVote
+  ? {
+      term: Term;
+      granted: boolean;
+    }
+  : Request extends AppendEntries
+  ? {
+      term: Term;
+      success: boolean;
+    }
+  : never;
 
 // A raft instance.
 export class Raft {
@@ -137,15 +138,15 @@ export class Raft {
   }
 
   private get peers() {
-    return this.config.servers.filter(s => s !== this.me);
+    return this.config.servers.filter((s) => s !== this.me);
   }
 
   private waitUntilBecomingLeader() {
-    return this.leader.waitFor(l => l === this.me);
+    return this.leader.waitFor((l) => l === this.me);
   }
 
   private waitUntilBecomingNonLeader() {
-    return this.leader.waitFor(l => l != this.me);
+    return this.leader.waitFor((l) => l != this.me);
   }
 
   private get isLeader() {
@@ -163,7 +164,10 @@ export class Raft {
     return index >= 0 && index < this.log.length ? this.log[index][TERM] : -1;
   }
 
-  private rpc<Req extends Request>(to: Address, request: Req): Promise<Response<Req>> {
+  private rpc<Req extends Request>(
+    to: Address,
+    request: Req
+  ): Promise<Response<Req>> {
     return this.transport.rpc(to, request);
   }
 
@@ -173,39 +177,45 @@ export class Raft {
   }
 
   /// Logic
-  
+
   start(): void {
-    for(const peer of this.peers) {
+    for (const peer of this.peers) {
       this.replicationTask(peer);
     }
     this.electionTask();
   }
 
   private async replicationTask(peer: Address) {
-    while(true) {
+    while (true) {
       await this.waitUntilBecomingLeader();
-      while(this.isLeader) {
+      while (this.isLeader) {
         await this.sendEntries(peer);
 
         await Promise.race([
           delay(this.config.heartbeatInterval),
           this.waitUntilBecomingNonLeader(),
           // FIXME: this leaks subscribers
-          this.logSize.waitFor(logSize => logSize > this.getMatchIndex(peer)),
+          this.logSize.waitFor((logSize) => logSize > this.getMatchIndex(peer)),
         ]);
       }
     }
   }
 
   private async sendEntries(peer: Address) {
-    const debug = this.debug.extend('replication:' + peer);
-    let nextIndex = this.matchIndex.has(peer) ? this.matchIndex.get(peer)! + 1 : this.log.length - 1;
+    const debug = this.debug.extend("replication:" + peer);
+    let nextIndex = this.matchIndex.has(peer)
+      ? this.matchIndex.get(peer)! + 1
+      : this.log.length - 1;
 
-    while(true) {
+    while (true) {
       const targetIndex = this.log.length - 1;
       const numEntries = targetIndex - nextIndex;
 
-      debug('attempting to replicate %d entries from index %d', numEntries, nextIndex);
+      debug(
+        "attempting to replicate %d entries from index %d",
+        numEntries,
+        nextIndex
+      );
 
       const reply = await this.rpc(peer, {
         type: "AppendEntries",
@@ -216,28 +226,28 @@ export class Raft {
         leaderCommit: this.commitIndex,
       });
 
-      if(reply.term > this.currentTerm) {
+      if (reply.term > this.currentTerm) {
         this.updateTerm(reply.term);
         return;
       }
 
-      if(reply.success) {
-        debug('replicated up to %d', targetIndex);
+      if (reply.success) {
+        debug("replicated up to %d", targetIndex);
         this.matchIndex.set(peer, targetIndex);
         return;
       } else {
         // TODO: implement actual binary search
-        debug('peer log does not match, backtracking by 1');
+        debug("peer log does not match, backtracking by 1");
         nextIndex--;
       }
     }
   }
 
   private updateTerm(newTerm: Term) {
-    if(newTerm > this.currentTerm) {
-      this.debug('our term is stale (%d > %d)', newTerm, this.currentTerm);
-      if(this.isLeader) {
-        this.debug('stepping down');
+    if (newTerm > this.currentTerm) {
+      this.debug("our term is stale (%d > %d)", newTerm, this.currentTerm);
+      if (this.isLeader) {
+        this.debug("stepping down");
       }
 
       // Warning: updating currentTerm, votedFor and leader has to be atomic!
@@ -248,7 +258,7 @@ export class Raft {
   }
 
   private updateCommitIndex(commitIndex: LogIndex) {
-    if(commitIndex > this.commitIndex) {
+    if (commitIndex > this.commitIndex) {
       this.commitIndex = commitIndex;
 
       // TODO: notify commit listeners
@@ -256,42 +266,52 @@ export class Raft {
   }
 
   private async electionTask() {
-    const debug = this.debug.extend('electionTask');
+    const debug = this.debug.extend("electionTask");
 
-    while(true) {
+    while (true) {
       await this.waitUntilBecomingNonLeader();
       const result = await Promise.race([
-        delay(randomInRange(this.config.minElectionTimeout, this.config.maxElectionTimeout)).then(() => 'timeout'),
-        this.leaderContact.wait().then(() => 'continue'),
-        this.waitUntilBecomingLeader().then(() => 'continue'),
+        delay(
+          randomInRange(
+            this.config.minElectionTimeout,
+            this.config.maxElectionTimeout
+          )
+        ).then(() => "timeout"),
+        this.leaderContact.wait().then(() => "continue"),
+        this.waitUntilBecomingLeader().then(() => "continue"),
       ]);
-      if(result === 'continue') {
+      if (result === "continue") {
         continue;
       }
 
-      while(!this.leader.get()) {
+      while (!this.leader.get()) {
         const term = ++this.currentTerm;
         this.votedFor = this.me;
         const neededVotes = Math.floor(this.config.servers.length / 2) + 1;
         const numVotes = new OVar(1);
         const abort = new OVar(null);
 
-        debug("starting election for term %d, need %d votes", term, neededVotes);
+        debug(
+          "starting election for term %d, need %d votes",
+          term,
+          neededVotes
+        );
 
-        for(const peer of this.peers) {
+        for (const peer of this.peers) {
           (async () => {
             const response = await this.rpc(peer, {
               type: "RequestVote",
               term,
               lastLogIndex: this.log.length - 1,
-              lastLogTerm: this.log.length > 0 ? this.log[this.log.length - 1][TERM] : -1,
+              lastLogTerm:
+                this.log.length > 0 ? this.log[this.log.length - 1][TERM] : -1,
             });
-            if(response.term > term) {
+            if (response.term > term) {
               this.updateTerm(response.term);
               abort.set(null);
               return;
             }
-            if(response.granted) {
+            if (response.granted) {
               debug("vote granted by %s", peer);
               numVotes.set(numVotes.get() + 1);
             }
@@ -299,13 +319,18 @@ export class Raft {
         }
 
         await Promise.race([
-          numVotes.waitFor(nv => nv >= neededVotes),
+          numVotes.waitFor((nv) => nv >= neededVotes),
           abort.wait(),
           this.leaderContact.wait(),
-          delay(randomInRange(this.config.minElectionTimeout, this.config.maxElectionTimeout)),
+          delay(
+            randomInRange(
+              this.config.minElectionTimeout,
+              this.config.maxElectionTimeout
+            )
+          ),
         ]);
 
-        if(this.currentTerm === term && numVotes.get() >= neededVotes) {
+        if (this.currentTerm === term && numVotes.get() >= neededVotes) {
           debug("got needed votes, becoming leader");
           this.becomeLeader();
         } else {
@@ -321,29 +346,35 @@ export class Raft {
   }
 
   // The real RPC handler, appropriately typed.
-  private handleRequest(from: Address, request: Request): Promise<Response<typeof request>> {
-    if(request.type === "RequestVote") {
+  private handleRequest(
+    from: Address,
+    request: Request
+  ): Promise<Response<typeof request>> {
+    if (request.type === "RequestVote") {
       return this.handleRequestVote(from, request);
-    } else if(request.type === "AppendEntries") {
+    } else if (request.type === "AppendEntries") {
       return this.handleAppendEntries(from, request);
     } else {
       throw new Error("Invalid request type");
     }
   }
 
-  private async handleRequestVote(from: Address, request: RequestVote): Promise<Response<RequestVote>> {
-    if(request.term > this.currentTerm) {
+  private async handleRequestVote(
+    from: Address,
+    request: RequestVote
+  ): Promise<Response<RequestVote>> {
+    if (request.term > this.currentTerm) {
       this.updateTerm(request.term);
     }
 
-    if(request.term < this.currentTerm) {
+    if (request.term < this.currentTerm) {
       return {
         term: this.currentTerm,
         granted: false,
       };
     }
 
-    if(!this.votedFor || this.votedFor === from) {
+    if (!this.votedFor || this.votedFor === from) {
       this.votedFor = from;
       // TODO: save to stable storage
 
@@ -359,24 +390,35 @@ export class Raft {
     }
   }
 
-  private async handleAppendEntries(from: Address, request: AppendEntries): Promise<Response<AppendEntries>> {
-    if(request.term > this.currentTerm) {
+  private async handleAppendEntries(
+    from: Address,
+    request: AppendEntries
+  ): Promise<Response<AppendEntries>> {
+    if (request.term > this.currentTerm) {
       this.updateTerm(request.term);
     }
 
-    if(request.term < this.currentTerm) {
+    if (request.term < this.currentTerm) {
       return {
         term: this.currentTerm,
         success: false,
       };
     }
 
-    if(!this.leader.get()) {
+    if (!this.leader.get()) {
       this.leader.set(from);
     }
 
-    if(request.prevLogIndex > 0 && (request.prevLogIndex >= this.log.length || request.prevLogTerm !== this.log[request.prevLogIndex][TERM])) {
-      this.debug("our log doesn't match leader %s at index %d", from, request.prevLogIndex);
+    if (
+      request.prevLogIndex > 0 &&
+      (request.prevLogIndex >= this.log.length ||
+        request.prevLogTerm !== this.log[request.prevLogIndex][TERM])
+    ) {
+      this.debug(
+        "our log doesn't match leader %s at index %d",
+        from,
+        request.prevLogIndex
+      );
       return {
         term: this.currentTerm,
         success: false,
@@ -385,16 +427,19 @@ export class Raft {
 
     this.leaderContact.set(null);
 
-    for(let i = 0; i < request.entries.length; i++) {
+    for (let i = 0; i < request.entries.length; i++) {
       const targetIndex = request.prevLogIndex + 1 + i;
 
-      if(targetIndex < this.log.length && this.log[targetIndex][TERM] !== request.entries[i][TERM]) {
+      if (
+        targetIndex < this.log.length &&
+        this.log[targetIndex][TERM] !== request.entries[i][TERM]
+      ) {
         this.debug("discarding log entries starting from %d", targetIndex);
         this.log.splice(targetIndex);
         // TODO: notify listeners that entries were discarded
       }
 
-      if(targetIndex >= this.log.length) {
+      if (targetIndex >= this.log.length) {
         this.log.push(request.entries[i]);
       }
     }
@@ -409,5 +454,5 @@ export class Raft {
 }
 
 function randomInRange(lo: number, hi: number): number {
-  return lo + (Math.random() * (hi - lo));
+  return lo + Math.random() * (hi - lo);
 }

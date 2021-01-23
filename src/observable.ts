@@ -11,7 +11,7 @@ export default class OVar<T> {
 
   removeListener(l: (v: T) => void) {
     const i = this.listeners.indexOf(l);
-    if(i !== -1) {
+    if (i !== -1) {
       this.listeners.splice(i, 1);
     }
   }
@@ -23,7 +23,7 @@ export default class OVar<T> {
   set(v: T) {
     this.value = v;
     process.nextTick(() => {
-      for(const l of this.listeners) {
+      for (const l of this.listeners) {
         l(v);
       }
     });
@@ -31,7 +31,7 @@ export default class OVar<T> {
 
   // Wait for the next change
   wait(): Promise<void> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const l = () => {
         this.removeListener(l);
         resolve();
@@ -41,13 +41,13 @@ export default class OVar<T> {
   }
 
   waitFor(predicate: (v: T) => boolean): Promise<void> {
-    return new Promise(resolve => {
-      if(predicate(this.get())) {
+    return new Promise((resolve) => {
+      if (predicate(this.get())) {
         resolve();
         return;
       }
       const l = (v: T) => {
-        if(predicate(v)) {
+        if (predicate(v)) {
           this.removeListener(l);
           resolve();
         }
