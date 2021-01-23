@@ -1,64 +1,36 @@
-import debug from "debug";
-import OVar from "./observable";
+import delay from 'delay';
+import { OVar, waitFor } from "./observable";
+import { randomInRange } from "./utils";
 
-type Address = string;
-type Json = any;
-type Term = number;
-type LogIndex = number;
-type Payload = string;
+export type Address = string;
+export type Json = any;
+export type Term = number;
+export type LogIndex = number;
+export type Payload = string;
 
 // Transport doesn't know about message types, operates on opaque JSON objects.
-interface Transport {
+export interface Transport {
   rpc(to: Address, request: Json): Promise<Json>;
   setReceiver(receiver: Receiver): void;
 }
 
-interface Receiver {
+export interface Receiver {
   // Handle incoming RPC. Returns the response.
   handleMessage(from: Address, message: Json): Json;
 }
 
-class NullReceiver {
+export class NullReceiver {
   handleMessage() {}
 }
 
-class TransportError extends Error {}
-
-class MemTransport {
-  private receiver: Receiver = new NullReceiver();
-
-  constructor(private net: MemNetwork, private myAddress: Address) {}
-
-  setReceiver(receiver: Receiver) {
-    this.receiver = receiver;
-  }
-
-  rpc(to: Address, request: Json): Promise<Json> {
-    const otherNode = this.net.nodes.get(to);
-    if (!otherNode) {
-      throw new TransportError("unknown_address");
-    }
-    return otherNode.receiver.handleMessage(this.myAddress, request);
-  }
-}
-
-class MemNetwork {
-  public nodes: Map<Address, MemTransport> = new Map();
-
-  constructor(addrs: Address[]) {
-    for (const addr of addrs) {
-      this.nodes.set(addr, new MemTransport(this, addr));
-    }
-  }
-}
-
-/// utilities
-
-function randomInRange(lo: number, hi: number): number {
-  return lo + Math.random() * (hi - lo);
-}
+export class TransportError extends Error {}
 
 /// Main raft code
+
+export interface Logger {
+  (formatter: any, ...args: any[]): void;
+  extend: (namespace: string) => Logger;
+}
 
 export type Config = {
   transport: Transport;
@@ -71,7 +43,7 @@ export type Config = {
   minElectionTimeout: number;
   maxElectionTimeout: number;
 
-  logger: debug.Debugger;
+  logger: Logger;
 };
 
 export type LogEntry = [Term, Payload];
@@ -112,7 +84,7 @@ export type Response<Request> = Request extends RequestVote
 
 // A raft instance.
 export class Raft {
-  private leader = new OVar<Address | null>(null);
+  private _leader = new OVar<Address | null>(null);
   private logSize = new OVar(0);
   /** Current leader contact number. Incremented on every contact from the
    * leader; can be used to wait for the next one. */
@@ -122,6 +94,7 @@ export class Raft {
   private log: LogEntry[] = [];
   private commitIndex: LogIndex = 0;
   private votedFor: Address | null = null;
+  private _stopped = new OVar(false);
 
   constructor(private config: Config) {
     this.transport.setReceiver(this);
@@ -139,12 +112,24 @@ export class Raft {
     return this.config.myAddress;
   }
 
+  get address() {
+    return this.config.myAddress;
+  }
+
   private get peers() {
     return this.config.servers.filter((s) => s !== this.me);
   }
 
-  private get isLeader() {
-    return this.leader.get() === this.me;
+  get stopped() {
+    return this._stopped.get();
+  }
+
+  get leader() {
+    return this._leader.get();
+  }
+
+  get isLeader() {
+    return this.leader === this.me;
   }
 
   // Returns current matchIndex for the given peer, or -1 if there's none.
@@ -179,13 +164,20 @@ export class Raft {
     this.electionTask();
   }
 
+  stop(): void {
+    this._stopped.set(true);
+  }
+
   private async replicationTask(peer: Address) {
     while (true) {
-      await OVar.waitFor(() => this.isLeader);
-      while (this.isLeader) {
+      await waitFor(() => this.isLeader || this.stopped);
+      if(this.stopped) {
+        return;
+      }
+      while (this.isLeader && !this.stopped) {
         await this.sendEntries(peer);
-        await OVar.waitFor(
-          () => !this.isLeader || this.logSize.get() > this.getMatchIndex(peer),
+        await waitFor(
+          () => !this.isLeader || (this.logSize.get() > 0 && this.logSize.get() > this.getMatchIndex(peer)) || this.stopped,
           this.config.heartbeatInterval
         );
       }
@@ -198,7 +190,7 @@ export class Raft {
       ? this.matchIndex.get(peer)! + 1
       : this.log.length - 1;
 
-    while (true) {
+    while (!this.stopped) {
       const targetIndex = this.log.length - 1;
       const numEntries = targetIndex - nextIndex;
 
@@ -244,7 +236,7 @@ export class Raft {
       // Warning: updating currentTerm, votedFor and leader has to be atomic!
       this.currentTerm = newTerm;
       this.votedFor = null;
-      this.leader.set(null);
+      this._leader.set(null);
     }
   }
 
@@ -260,18 +252,31 @@ export class Raft {
     const debug = this.debug.extend("electionTask");
 
     while (true) {
-      await OVar.waitFor(() => !this.isLeader);
+      await waitFor(() => !this.isLeader || this.stopped);
+      if(this.stopped) {
+        return;
+      }
       const lastLeaderContact = this.leaderContact.get();
-      const result = await OVar.waitFor(() => {
+      const result = await waitFor(() => {
+        if(this.stopped) {
+          return "stop";
+        }
         if (this.isLeader || this.leaderContact.get() > lastLeaderContact) {
           return "continue";
         }
       }, randomInRange(this.config.minElectionTimeout, this.config.maxElectionTimeout));
+      if (result === "stop") {
+        return;
+      }
       if (result === "continue") {
         continue;
       }
 
-      while (!this.leader.get()) {
+      while (!this.leader) {
+        if(this.stopped) {
+          return;
+        }
+
         const term = ++this.currentTerm;
         this.votedFor = this.me;
         const neededVotes = Math.floor(this.config.servers.length / 2) + 1;
@@ -306,11 +311,12 @@ export class Raft {
         }
 
         const lastLeaderContact = this.leaderContact.get();
-        await OVar.waitFor(
+        await waitFor(
           () =>
             numVotes.get() >= neededVotes ||
             aborted.get() ||
-            this.leaderContact.get() > lastLeaderContact,
+            this.leaderContact.get() > lastLeaderContact ||
+          this.stopped,
           randomInRange(
             this.config.minElectionTimeout,
             this.config.maxElectionTimeout
@@ -327,7 +333,7 @@ export class Raft {
 
   private becomeLeader() {
     this.matchIndex.clear();
-    this.leader.set(this.me);
+    this._leader.set(this.me);
   }
 
   // The real RPC handler, appropriately typed.
@@ -390,8 +396,8 @@ export class Raft {
       };
     }
 
-    if (!this.leader.get()) {
-      this.leader.set(from);
+    if (!this.leader) {
+      this._leader.set(from);
     }
 
     if (
