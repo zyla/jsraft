@@ -1,4 +1,4 @@
-import delay from 'delay';
+import delay from "delay";
 import { OVar, waitFor } from "./observable";
 import { randomInRange } from "./utils";
 
@@ -180,13 +180,17 @@ export class Raft {
   private async replicationTask(peer: Address) {
     while (true) {
       await waitFor(() => this.isLeader || this.stopped);
-      if(this.stopped) {
+      if (this.stopped) {
         return;
       }
       while (this.isLeader && !this.stopped) {
         await this.sendEntries(peer);
         await waitFor(
-          () => !this.isLeader || (this.logSize.get() > 0 && this.logSize.get() > this.getMatchIndex(peer)) || this.stopped,
+          () =>
+            !this.isLeader ||
+            (this.logSize.get() > 0 &&
+              this.logSize.get() > this.getMatchIndex(peer)) ||
+            this.stopped,
           this.config.heartbeatInterval
         );
       }
@@ -263,12 +267,12 @@ export class Raft {
 
     while (true) {
       await waitFor(() => !this.isLeader || this.stopped);
-      if(this.stopped) {
+      if (this.stopped) {
         return;
       }
       const lastLeaderContact = this.leaderContact.get();
       const result = await waitFor(() => {
-        if(this.stopped) {
+        if (this.stopped) {
           return "stop";
         }
         if (this.isLeader || this.leaderContact.get() > lastLeaderContact) {
@@ -283,7 +287,7 @@ export class Raft {
       }
 
       while (!this.leader) {
-        if(this.stopped) {
+        if (this.stopped) {
           return;
         }
 
@@ -326,7 +330,7 @@ export class Raft {
             numVotes.get() >= neededVotes ||
             aborted.get() ||
             this.leaderContact.get() > lastLeaderContact ||
-          this.stopped,
+            this.stopped,
           randomInRange(
             this.config.minElectionTimeout,
             this.config.maxElectionTimeout
@@ -385,7 +389,12 @@ export class Raft {
         granted: true,
       };
     } else {
-      this.debug("not voting for %s in term %d, already voted for %s", from, this.currentTerm, this.votedFor);
+      this.debug(
+        "not voting for %s in term %d, already voted for %s",
+        from,
+        this.currentTerm,
+        this.votedFor
+      );
       return {
         term: this.currentTerm,
         granted: false,

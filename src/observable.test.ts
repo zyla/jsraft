@@ -1,5 +1,5 @@
-import { OVar, waitFor } from './observable';
-import delay from 'delay';
+import { OVar, waitFor } from "./observable";
+import delay from "delay";
 
 describe("waitFor", () => {
   it("returns immediately when no vars", async () => {
@@ -28,7 +28,7 @@ describe("waitFor", () => {
   });
   it("can time out", async () => {
     const v = new OVar(false);
-    expect(await waitFor(() => v.get(), 100)).toEqual('timeout');
+    expect(await waitFor(() => v.get(), 100)).toEqual("timeout");
   });
   it("doesn't leak listeners after timeout", async () => {
     const v = new OVar(false);
@@ -42,25 +42,29 @@ describe("waitFor", () => {
     expect(await p).toEqual(true);
   });
   it("notifies multiple listeners", async () => {
-    const v = new OVar('initial');
-    let x1: string = '';
-    let x2: string = '';
-    waitFor(() => { x1 = v.get(); });
-    waitFor(() => { x2 = v.get(); });
-    v.set('foo');
+    const v = new OVar("initial");
+    let x1: string = "";
+    let x2: string = "";
+    waitFor(() => {
+      x1 = v.get();
+    });
+    waitFor(() => {
+      x2 = v.get();
+    });
+    v.set("foo");
     await delay(10);
-    expect([x1, x2]).toEqual(['foo', 'foo']);
-    v.set('bar');
+    expect([x1, x2]).toEqual(["foo", "foo"]);
+    v.set("bar");
     await delay(10);
-    expect([x1, x2]).toEqual(['bar', 'bar']);
+    expect([x1, x2]).toEqual(["bar", "bar"]);
   });
 });
 
 async function assertNotResolved<T>(p: Promise<T>): Promise<void> {
   let resolved = false;
-  p.then(() => resolved = true);
+  p.then(() => (resolved = true));
   await delay(100);
-  if(resolved) {
-    throw new Error('Expected promise not to be resolved');
+  if (resolved) {
+    throw new Error("Expected promise not to be resolved");
   }
 }

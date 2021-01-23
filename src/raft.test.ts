@@ -1,9 +1,20 @@
-import debug from 'debug';
-import delay from 'delay';
-import { format, inspect } from 'util';
+import debug from "debug";
+import delay from "delay";
+import { format, inspect } from "util";
 import { randomInRange } from "./utils";
 import { OVar, waitFor as observableWaitFor } from "./observable";
-import { Raft, Term, Logger, Transport, Receiver, NullReceiver, Json, TransportError, Config, Address } from './raft';
+import {
+  Raft,
+  Term,
+  Logger,
+  Transport,
+  Receiver,
+  NullReceiver,
+  Json,
+  TransportError,
+  Config,
+  Address,
+} from "./raft";
 
 class Cluster {
   private stopped = false;
@@ -12,19 +23,20 @@ class Cluster {
   private net: MemNetwork;
 
   constructor(addrs: Address[], config: ClusterConfig) {
-    debug.enable('raft:*');
-    const logger = debug('raft');
+    const logger = debug("raft");
     logger.log = (fmt: any, ...args: any[]) => {
-      if(!this.stopped) {
-        process.stdout.write(format(fmt, ...args) + '\n');
+      if (!this.stopped) {
+        process.stdout.write(format(fmt, ...args) + "\n");
       }
-    }
+    };
 
     this.logger = logger;
-//    OVar.logger = logger.extend('ovar');
+    if (process.env.LOG_OVAR) {
+      OVar.logger = logger.extend("ovar");
+    }
 
-    this.net = new MemNetwork(addrs, this.logger.extend('net'));
-    this.servers = addrs.map(addr => {
+    this.net = new MemNetwork(addrs, this.logger.extend("net"));
+    this.servers = addrs.map((addr) => {
       const s = new Raft({
         transport: this.net.nodes.get(addr)!,
         servers: addrs,
@@ -33,7 +45,7 @@ class Cluster {
         minElectionTimeout,
         maxElectionTimeout,
         logger: this.logger.extend(addr),
-        ...config
+        ...config,
       });
       s.start();
       return s;
@@ -43,8 +55,8 @@ class Cluster {
   leader() {
     let term = 0;
     let leader: Address | null = null;
-    for(const s of this.servers) {
-      if(s.isLeader && s.term > term) {
+    for (const s of this.servers) {
+      if (s.isLeader && s.term > term) {
         term = s.term;
         leader = s.address;
       }
@@ -54,7 +66,7 @@ class Cluster {
 
   get term() {
     let term = 0;
-    for(const s of this.servers) {
+    for (const s of this.servers) {
       term = Math.max(term, s.term);
     }
     return term;
@@ -63,7 +75,7 @@ class Cluster {
   stop() {
     this.logger("stopping the cluster");
     this.stopped = true;
-    for(const s of this.servers) {
+    for (const s of this.servers) {
       s.stop();
     }
   }
@@ -76,22 +88,32 @@ class Cluster {
   checkAllLeaders() {
     const leader = this.leader();
     const term = this.term;
-    if(!leader) {
+    if (!leader) {
       return false;
     }
-    const leaders = this.servers.map(s => [s.term, s.leader]);
-    this.logger('leaders: %O', leaders);
-    if(this.servers.some(s => s.term === term && s.leader && s.leader !== leader)) {
-      throw new Error('Not all nodes know the same leader: ' + inspect(leaders));
+    const leaders = this.servers.map((s) => [s.term, s.leader]);
+    this.logger("leaders: %O", leaders);
+    if (
+      this.servers.some(
+        (s) => s.term === term && s.leader && s.leader !== leader
+      )
+    ) {
+      throw new Error(
+        "Not all nodes know the same leader: " + inspect(leaders)
+      );
     }
-    return this.servers.every(s => s.leader);
+    return this.servers.every((s) => s.leader);
   }
 }
 
 export class MemTransport {
   private receiver: Receiver = new NullReceiver();
 
-  constructor(private net: MemNetwork, private myAddress: Address, private logger: Logger) {}
+  constructor(
+    private net: MemNetwork,
+    private myAddress: Address,
+    private logger: Logger
+  ) {}
 
   setReceiver(receiver: Receiver) {
     this.receiver = receiver;
@@ -104,7 +126,10 @@ export class MemTransport {
     }
     await delay(randomInRange(0, 10));
     this.logger("%s->%s %s", this.myAddress, to, JSON.stringify(request));
-    const response = await otherNode.receiver.handleMessage(this.myAddress, request);
+    const response = await otherNode.receiver.handleMessage(
+      this.myAddress,
+      request
+    );
     await delay(randomInRange(0, 10));
     this.logger("%s->%s %s", to, this.myAddress, JSON.stringify(response));
     return response;
@@ -135,17 +160,16 @@ type ClusterConfig = {
 };
 
 function setupCluster(config: ClusterConfig = {}) {
-  const addrs = Array.from(Array(config.numServers || 3).keys()).map((index) => "s" + (index + 1));
+  const addrs = Array.from(Array(config.numServers || 3).keys()).map(
+    (index) => "s" + (index + 1)
+  );
   return new Cluster(addrs, config);
 }
 
-async function waitFor<T>(
-  fn: () => T,
-  timeout?: number
-): Promise<T> {
+async function waitFor<T>(fn: () => T, timeout?: number): Promise<T> {
   const result = await observableWaitFor(fn, timeout);
-  if(result === 'timeout') {
-    throw new Error('waitFor: timeout waiting for ' + fn);
+  if (result === "timeout") {
+    throw new Error("waitFor: timeout waiting for " + fn);
   }
   return result;
 }
@@ -153,7 +177,7 @@ async function waitFor<T>(
 describe("Leader election", () => {
   it("works without network disruption", async () => {
     const c = setupCluster();
-    const debug = c.logger.extend('test');
+    const debug = c.logger.extend("test");
     try {
       await waitFor(() => c.checkAllLeaders(), 2 * maxElectionTimeout);
     } finally {
@@ -163,16 +187,23 @@ describe("Leader election", () => {
 
   it("works with many candidates", async () => {
     // Set election timeouts such that they are very likely to fire at the same time
-    const c = setupCluster({ minElectionTimeout: 100, maxElectionTimeout: 105 });
-    const debug = c.logger.extend('test');
+    const c = setupCluster({
+      minElectionTimeout: 100,
+      maxElectionTimeout: 105,
+    });
+    const debug = c.logger.extend("test");
     try {
       const p = waitFor(() => {
         const l = c.leader();
-        debug('LEADER: %s', l);
+        debug("LEADER: %s", l);
         return l;
       }, 3000);
       waitFor(() => {
-        debug('leaders: %O, leader: %s', c.servers.map(s => [s.term, s.leader]), c.leader());
+        debug(
+          "leaders: %O, leader: %s",
+          c.servers.map((s) => [s.term, s.leader]),
+          c.leader()
+        );
         return false;
       });
       await p;

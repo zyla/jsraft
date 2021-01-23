@@ -1,4 +1,4 @@
-import { debug as makeDebug } from 'debug';
+import { debug as makeDebug } from "debug";
 
 /**
  * OVar - "observable variable".
@@ -9,12 +9,12 @@ export class OVar<T> {
   private static nextId = 1;
   private id = ++OVar.nextId;
 
-  public static logger = makeDebug('__disabled__');
+  public static logger = makeDebug("__disabled__");
 
   constructor(private value: T, public name: string | null = null) {}
 
   describe() {
-    return this.name || ('var' + this.id);
+    return this.name || "var" + this.id;
   }
 
   addListener(l: (v: T) => void) {
@@ -61,10 +61,14 @@ export class OVar<T> {
     }
     OVar.collectingVarsToWatch = new Map();
     try {
-      OVar.logger('evaluating %s', fn);
+      OVar.logger("evaluating %s", fn);
       const value = fn();
       const deps = Array.from(OVar.collectingVarsToWatch.values());
-      OVar.logger('evaluated %s deps: %O', fn, deps.map(v => v.describe()));
+      OVar.logger(
+        "evaluated %s deps: %O",
+        fn,
+        deps.map((v) => v.describe())
+      );
       return [value, deps];
     } finally {
       OVar.collectingVarsToWatch = null;
@@ -92,13 +96,13 @@ export class OVar<T> {
       : null;
     while (true) {
       if (timedOut) {
-        OVar.logger('waitFor %s timed out', fn);
+        OVar.logger("waitFor %s timed out", fn);
         return "timeout";
       }
       const [value, deps] = OVar.__evalWithDependencies(fn);
       try {
         if (value) {
-          OVar.logger('waitFor %s finished with %O', fn, value);
+          OVar.logger("waitFor %s finished with %O", fn, value);
           return value;
         }
         let scheduled = false;
@@ -126,7 +130,6 @@ export class OVar<T> {
     }
   }
 }
-
 
 export default OVar;
 
