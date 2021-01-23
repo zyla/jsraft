@@ -98,6 +98,15 @@ export class Raft {
 
   constructor(private config: Config) {
     this.transport.setReceiver(this);
+
+    this._leader.name = `${this.me}.leader`;
+    this.leaderContact.name = `${this.me}.leaderContact`;
+    this._stopped.name = `${this.me}.stopped`;
+    this.logSize.name = `${this.me}.logSize`;
+  }
+
+  get term() {
+    return this.currentTerm;
   }
 
   private get debug() {
@@ -280,8 +289,8 @@ export class Raft {
         const term = ++this.currentTerm;
         this.votedFor = this.me;
         const neededVotes = Math.floor(this.config.servers.length / 2) + 1;
-        const numVotes = new OVar(1);
-        const aborted = new OVar(false);
+        const numVotes = new OVar(1, `${this.me}.numVotes[term=${term}]`);
+        const aborted = new OVar(false, `${this.me}.aborted[term=${term}]`);
 
         debug(
           "starting election for term %d, need %d votes",
@@ -324,7 +333,7 @@ export class Raft {
         );
 
         if (this.currentTerm === term && numVotes.get() >= neededVotes) {
-          debug("got needed votes, becoming leader");
+          debug("got needed votes, becoming leader in term %d", term);
           this.becomeLeader();
         }
       }
@@ -366,6 +375,7 @@ export class Raft {
     }
 
     if (!this.votedFor || this.votedFor === from) {
+      this.debug("voted for %s in term %d", from, this.currentTerm);
       this.votedFor = from;
       // TODO: save to stable storage
 
@@ -374,6 +384,7 @@ export class Raft {
         granted: true,
       };
     } else {
+      this.debug("not voting for %s in term %d, already voted for %s", from, this.currentTerm, this.votedFor);
       return {
         term: this.currentTerm,
         granted: false,
@@ -400,6 +411,8 @@ export class Raft {
       this._leader.set(from);
     }
 
+    this.leaderContact.set(this.leaderContact.get() + 1);
+
     if (
       request.prevLogIndex > 0 &&
       (request.prevLogIndex >= this.log.length ||
@@ -415,8 +428,6 @@ export class Raft {
         success: false,
       };
     }
-
-    this.leaderContact.set(this.leaderContact.get() + 1);
 
     for (let i = 0; i < request.entries.length; i++) {
       const targetIndex = request.prevLogIndex + 1 + i;

@@ -1,3 +1,7 @@
 2021-01-23 06:27 CET - Fixing memory leaks in OVar usage
 2021-01-23 07:53 CET - adding tests
 
+2021-01-23 14:47 CET - Debugging test failure, which seems to be a problem with OVar
+
+2021-01-23 15:11 CET - Fixing bug: it's possible to elect two different leaders in the same term
+

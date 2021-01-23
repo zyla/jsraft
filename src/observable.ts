@@ -1,3 +1,5 @@
+import { debug as makeDebug } from 'debug';
+
 /**
  * OVar - "observable variable".
  * A variable whose changes you can listen to.
@@ -7,7 +9,13 @@ export class OVar<T> {
   private static nextId = 1;
   private id = ++OVar.nextId;
 
-  constructor(private value: T) {}
+  public static logger = makeDebug('__disabled__');
+
+  constructor(private value: T, public name: string | null = null) {}
+
+  describe() {
+    return this.name || ('var' + this.id);
+  }
 
   addListener(l: (v: T) => void) {
     this.listeners.push(l);
@@ -28,6 +36,7 @@ export class OVar<T> {
 
   get() {
     if (OVar.collectingVarsToWatch) {
+      OVar.logger("adding %s to deps", this.describe());
       OVar.collectingVarsToWatch.set(this.id, this);
     }
     return this.value;
@@ -52,68 +61,73 @@ export class OVar<T> {
     }
     OVar.collectingVarsToWatch = new Map();
     try {
+      OVar.logger('evaluating %s', fn);
       const value = fn();
       const deps = Array.from(OVar.collectingVarsToWatch.values());
+      OVar.logger('evaluated %s deps: %O', fn, deps.map(v => v.describe()));
       return [value, deps];
     } finally {
       OVar.collectingVarsToWatch = null;
     }
   }
-}
 
-/**
- * Wait until `fn` returns a truthy value, or, if timeout is specified, the timeout passes.
- *
- * `fn` may read OVars. If one of them changes while we're waiting, `fn` will be reevaluated.
- *
- * If timeout happens, this function will return the special value `'timeout'`.
- */
-export async function waitFor<T>(
-  fn: () => T,
-  timeout?: number
-): Promise<T | "timeout"> {
-  let listener: () => void = () => {};
-  let timedOut = false;
-  const timeoutId = timeout
-    ? setTimeout(() => {
-        timedOut = true;
-        listener();
-      }, timeout)
-    : null;
-  while (true) {
-    if (timedOut) {
-      return "timeout";
-    }
-    const [value, deps] = OVar.__evalWithDependencies(fn);
-    try {
-      if (value) {
-        return value;
+  /**
+   * Wait until `fn` returns a truthy value, or, if timeout is specified, the timeout passes.
+   *
+   * `fn` may read OVars. If one of them changes while we're waiting, `fn` will be reevaluated.
+   *
+   * If timeout happens, this function will return the special value `'timeout'`.
+   */
+  static async waitFor<T>(
+    fn: () => T,
+    timeout?: number
+  ): Promise<T | "timeout"> {
+    let listener: () => void = () => {};
+    let timedOut = false;
+    const timeoutId = timeout
+      ? setTimeout(() => {
+          timedOut = true;
+          listener();
+        }, timeout)
+      : null;
+    while (true) {
+      if (timedOut) {
+        OVar.logger('waitFor %s timed out', fn);
+        return "timeout";
       }
-      let scheduled = false;
-      await new Promise((resolve) => {
-        listener = () => {
-          if (timeoutId && !timedOut) {
-            clearTimeout(timeoutId);
-          }
-          if (!scheduled) {
-            scheduled = true;
-            resolve(void 0);
-          }
-        };
-        for (const dep of deps) {
-          dep.addListener(listener);
+      const [value, deps] = OVar.__evalWithDependencies(fn);
+      try {
+        if (value) {
+          OVar.logger('waitFor %s finished with %O', fn, value);
+          return value;
         }
-      });
-    } finally {
-      if (listener) {
-        for (const dep of deps) {
-          dep.removeListener(listener);
+        let scheduled = false;
+        await new Promise((resolve) => {
+          listener = () => {
+            if (timeoutId && !timedOut) {
+              clearTimeout(timeoutId);
+            }
+            if (!scheduled) {
+              scheduled = true;
+              resolve(void 0);
+            }
+          };
+          for (const dep of deps) {
+            dep.addListener(listener);
+          }
+        });
+      } finally {
+        if (listener) {
+          for (const dep of deps) {
+            dep.removeListener(listener);
+          }
         }
       }
     }
   }
 }
 
+
 export default OVar;
 
-OVar.waitFor = waitFor;
+export const waitFor = OVar.waitFor.bind(OVar);
