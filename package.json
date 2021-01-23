@@ -2,6 +2,7 @@
   "private": true,
   "scripts": {
     "watch": "tsc --watch --project tsconfig.json",
+    "build": "tsc --project tsconfig.json",
     "lint": "eslint src"
   },
   "devDependencies": {
