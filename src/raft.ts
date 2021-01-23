@@ -195,11 +195,12 @@ export class Raft {
 
   private async sendEntries(peer: Address) {
     const debug = this.debug.extend("replication:" + peer);
+    const term = this.currentTerm;
     let nextIndex = this.matchIndex.has(peer)
       ? this.matchIndex.get(peer)! + 1
       : this.log.length - 1;
 
-    while (!this.stopped) {
+    while (this.isLeader && !this.stopped) {
       const targetIndex = this.log.length - 1;
       const numEntries = targetIndex - nextIndex;
 
@@ -211,7 +212,7 @@ export class Raft {
 
       const reply = await this.rpc(peer, {
         type: "AppendEntries",
-        term: this.currentTerm,
+        term,
         prevLogIndex: nextIndex - 1,
         prevLogTerm: this.getLogTerm(nextIndex - 1),
         entries: this.log.slice(nextIndex, numEntries),
