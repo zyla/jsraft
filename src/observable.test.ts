@@ -41,6 +41,19 @@ describe("waitFor", () => {
     v.set(true);
     expect(await p).toEqual(true);
   });
+  it("notifies multiple listeners", async () => {
+    const v = new OVar('initial');
+    let x1: string = '';
+    let x2: string = '';
+    waitFor(() => { x1 = v.get(); });
+    waitFor(() => { x2 = v.get(); });
+    v.set('foo');
+    await delay(10);
+    expect([x1, x2]).toEqual(['foo', 'foo']);
+    v.set('bar');
+    await delay(10);
+    expect([x1, x2]).toEqual(['bar', 'bar']);
+  });
 });
 
 async function assertNotResolved<T>(p: Promise<T>): Promise<void> {
