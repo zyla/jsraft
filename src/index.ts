@@ -52,10 +52,10 @@ class MemNetwork {
   }
 }
 
-/// delay
+/// utilities
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function randomInRange(lo: number, hi: number): number {
+  return lo + Math.random() * (hi - lo);
 }
 
 /// Main raft code
@@ -114,7 +114,9 @@ export type Response<Request> = Request extends RequestVote
 export class Raft {
   private leader = new OVar<Address | null>(null);
   private logSize = new OVar(0);
-  private leaderContact = new OVar<null>(null);
+  /** Current leader contact number. Incremented on every contact from the
+   * leader; can be used to wait for the next one. */
+  private leaderContact = new OVar(0);
   private matchIndex = new Map<Address, LogIndex>();
   private currentTerm: Term = 0;
   private log: LogEntry[] = [];
@@ -139,14 +141,6 @@ export class Raft {
 
   private get peers() {
     return this.config.servers.filter((s) => s !== this.me);
-  }
-
-  private waitUntilBecomingLeader() {
-    return this.leader.waitFor((l) => l === this.me);
-  }
-
-  private waitUntilBecomingNonLeader() {
-    return this.leader.waitFor((l) => l != this.me);
   }
 
   private get isLeader() {
@@ -187,16 +181,13 @@ export class Raft {
 
   private async replicationTask(peer: Address) {
     while (true) {
-      await this.waitUntilBecomingLeader();
+      await OVar.waitFor(() => this.isLeader);
       while (this.isLeader) {
         await this.sendEntries(peer);
-
-        await Promise.race([
-          delay(this.config.heartbeatInterval),
-          this.waitUntilBecomingNonLeader(),
-          // FIXME: this leaks subscribers
-          this.logSize.waitFor((logSize) => logSize > this.getMatchIndex(peer)),
-        ]);
+        await OVar.waitFor(
+          () => !this.isLeader || this.logSize.get() > this.getMatchIndex(peer),
+          this.config.heartbeatInterval
+        );
       }
     }
   }
@@ -269,17 +260,13 @@ export class Raft {
     const debug = this.debug.extend("electionTask");
 
     while (true) {
-      await this.waitUntilBecomingNonLeader();
-      const result = await Promise.race([
-        delay(
-          randomInRange(
-            this.config.minElectionTimeout,
-            this.config.maxElectionTimeout
-          )
-        ).then(() => "timeout"),
-        this.leaderContact.wait().then(() => "continue"),
-        this.waitUntilBecomingLeader().then(() => "continue"),
-      ]);
+      await OVar.waitFor(() => !this.isLeader);
+      const lastLeaderContact = this.leaderContact.get();
+      const result = await OVar.waitFor(() => {
+        if (this.isLeader || this.leaderContact.get() > lastLeaderContact) {
+          return "continue";
+        }
+      }, randomInRange(this.config.minElectionTimeout, this.config.maxElectionTimeout));
       if (result === "continue") {
         continue;
       }
@@ -289,7 +276,7 @@ export class Raft {
         this.votedFor = this.me;
         const neededVotes = Math.floor(this.config.servers.length / 2) + 1;
         const numVotes = new OVar(1);
-        const abort = new OVar(null);
+        const aborted = new OVar(false);
 
         debug(
           "starting election for term %d, need %d votes",
@@ -308,7 +295,7 @@ export class Raft {
             });
             if (response.term > term) {
               this.updateTerm(response.term);
-              abort.set(null);
+              aborted.set(true);
               return;
             }
             if (response.granted) {
@@ -318,23 +305,21 @@ export class Raft {
           })();
         }
 
-        await Promise.race([
-          numVotes.waitFor((nv) => nv >= neededVotes),
-          abort.wait(),
-          this.leaderContact.wait(),
-          delay(
-            randomInRange(
-              this.config.minElectionTimeout,
-              this.config.maxElectionTimeout
-            )
-          ),
-        ]);
+        const lastLeaderContact = this.leaderContact.get();
+        await OVar.waitFor(
+          () =>
+            numVotes.get() >= neededVotes ||
+            aborted.get() ||
+            this.leaderContact.get() > lastLeaderContact,
+          randomInRange(
+            this.config.minElectionTimeout,
+            this.config.maxElectionTimeout
+          )
+        );
 
         if (this.currentTerm === term && numVotes.get() >= neededVotes) {
           debug("got needed votes, becoming leader");
           this.becomeLeader();
-        } else {
-          debug("election failed, retrying");
         }
       }
     }
@@ -425,7 +410,7 @@ export class Raft {
       };
     }
 
-    this.leaderContact.set(null);
+    this.leaderContact.set(this.leaderContact.get() + 1);
 
     for (let i = 0; i < request.entries.length; i++) {
       const targetIndex = request.prevLogIndex + 1 + i;
@@ -451,8 +436,4 @@ export class Raft {
       success: true,
     };
   }
-}
-
-function randomInRange(lo: number, hi: number): number {
-  return lo + Math.random() * (hi - lo);
 }
