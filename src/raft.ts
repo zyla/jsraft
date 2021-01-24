@@ -44,6 +44,9 @@ export type Config = {
   maxElectionTimeout: number;
 
   logger: Logger;
+
+  /* For tests: disable election timer. */
+  electionDisabled?: boolean;
 };
 
 export type LogEntry = [Term, Payload];
@@ -289,6 +292,11 @@ export class Raft {
 
   private async electionTask() {
     const debug = this.debug.extend("electionTask");
+
+    if(this.config.electionDisabled) {
+      debug("Election disabled for this node");
+      return;
+    }
 
     while (true) {
       await waitFor(() => !this.isLeader || this.stopped);

@@ -46,6 +46,7 @@ class Cluster {
         minElectionTimeout,
         maxElectionTimeout,
         logger: this.logger.extend(addr),
+        electionDisabled: config.oneLeader && addr !== "s1",
         ...config,
       });
       s.start();
@@ -160,11 +161,16 @@ const heartbeatInterval = SLOW ? 500 : 50;
 const minElectionTimeout = SLOW ? 1000 : 100;
 const maxElectionTimeout = SLOW ? 2000 : 200;
 
+const ITERATIONS = 1000;
+
 type ClusterConfig = {
   numServers?: number;
   heartbeatInterval?: number;
   minElectionTimeout?: number;
   maxElectionTimeout?: number;
+
+  /** Allow only the first node to become leader by disabling election timers for all other nodes. */
+  oneLeader?: boolean;
 };
 
 function setupCluster(config: ClusterConfig = {}) {
@@ -207,7 +213,7 @@ async function flushDeferred() {
 
 describe("Leader election", () => {
   it("works without network disruption", async () => {
-    for(let i = 1; i <= 100; i++) {
+    for(let i = 1; i <= ITERATIONS; i++) {
       try {
         const s = new Scheduler;
         s.install();
@@ -228,12 +234,12 @@ describe("Replication", () => {
   it("can replicate log entries", async () => {
     // In this test we only check that the logs are replicated - by directly inspecting logs on all the nodes.
     // Note that this doesn't look at state machine application, or even tracking the commit index.
-    for(let i = 1; i <= 100; i++) {
+    for(let i = 1; i <= ITERATIONS; i++) {
       try {
         const s = new Scheduler;
         s.install();
         defer(async () => { await s.step(); s.uninstall() });
-        const c = setupCluster();
+        const c = setupCluster({ oneLeader: true });
         defer(() => c.stop());
         const debug = c.logger.extend("test");
         debug("========= ITERATION %d ==========", i);
