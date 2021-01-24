@@ -1,7 +1,7 @@
 import debug from "debug";
 import delay from "delay";
 import { format, inspect } from "util";
-import { randomInRange } from "./utils";
+import { randomInRange, deepEquals } from "./utils";
 import { OVar, waitFor as observableWaitFor } from "./observable";
 import {
   Raft,
@@ -50,6 +50,10 @@ class Cluster {
       s.start();
       return s;
     });
+  }
+
+  server(addr: Address): Raft {
+    return this.servers.find((s) => s.address === addr)!;
   }
 
   leader() {
@@ -211,6 +215,50 @@ describe("Leader election", () => {
       });
       await p;
       await waitFor(() => c.checkAllLeaders(), 200);
+    } finally {
+      c.stop();
+    }
+  });
+});
+
+describe("Replication", () => {
+  it("can replicate log entries", async () => {
+    // In this test we only check that the logs are replicated - by directly inspecting logs on all the nodes.
+    // Note that this doesn't look at state machine application, or even tracking the commit index.
+
+    const c = setupCluster();
+    const debug = c.logger.extend("test");
+    try {
+      // Debug
+      waitFor(() => {
+        for (const s of c.servers) {
+          debug("%s: %O", s.address, s.getLog());
+        }
+      });
+
+      await waitFor(() => c.leader(), 2 * maxElectionTimeout);
+      const leader = c.server(c.leader()!);
+      const entry = await leader.propose("Hello");
+      // Leader should have the entry in the log immediately
+      const expectedLog = [[entry.term, "Hello"]];
+      expect(leader.getLog()).toEqual(expectedLog);
+
+      function waitForLogsToConverge() {
+        return waitFor(() => {
+          for (const s of c.servers) {
+            if (!deepEquals(s.getLog(), expectedLog)) {
+              return false;
+            }
+          }
+          return true;
+        }, 2 * heartbeatInterval);
+      }
+      await waitForLogsToConverge();
+
+      // Another entry
+      const entry2 = await leader.propose("World");
+      expectedLog.push([entry2.term, "World"]);
+      await waitForLogsToConverge();
     } finally {
       c.stop();
     }

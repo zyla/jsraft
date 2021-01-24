@@ -6,3 +6,9 @@
 2021-01-23 15:11 CET - Fixing bug: it's possible to elect two different leaders in the same term
 Problem: term may change while replicating, and we end up sending AppendEntries for a term for which we're not leader.
 
+2021-01-24 10:27 CET - Writing a basic test for log replication
+
+2021-01-24 15:03 CET - Writing a basic test for replication
+
+2021-01-24 15:07 CET - Investigating why tests are so slow (TS?)
+

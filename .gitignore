@@ -2,3 +2,4 @@ node_modules/
 public/bundle.js
 public/main.css
 dist/
+test.log

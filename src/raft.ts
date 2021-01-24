@@ -109,6 +109,12 @@ export class Raft {
     return this.currentTerm;
   }
 
+  // Snapshot the whole log. Reactive. For use in tests only.
+  getLog() {
+    this.logSize.get();
+    return this.log.slice();
+  }
+
   private get debug() {
     return this.config.logger;
   }
@@ -177,6 +183,23 @@ export class Raft {
     this._stopped.set(true);
   }
 
+  /**
+   * Append a value to the log, and return its log entry identifier (log index and term).
+   * If this node is not a leader, throws NotLeader.
+   */
+  async propose(payload: Payload): Promise<{ index: LogIndex; term: Term }> {
+    if (!this.isLeader) {
+      throw new NotLeader();
+    }
+
+    const term = this.term;
+    const index = this.log.length;
+    this.debug("appended entry [%d, %O] at index %d", term, payload, index);
+    this.log.push([term, payload]);
+    this.logSize.set(this.log.length);
+    return { index, term };
+  }
+
   private async replicationTask(peer: Address) {
     while (true) {
       await waitFor(() => this.isLeader || this.stopped);
@@ -189,7 +212,7 @@ export class Raft {
           () =>
             !this.isLeader ||
             (this.logSize.get() > 0 &&
-              this.logSize.get() > this.getMatchIndex(peer)) ||
+              this.logSize.get() > this.getMatchIndex(peer) + 1) ||
             this.stopped,
           this.config.heartbeatInterval
         );
@@ -202,16 +225,18 @@ export class Raft {
     const term = this.currentTerm;
     let nextIndex = this.matchIndex.has(peer)
       ? this.matchIndex.get(peer)! + 1
-      : this.log.length - 1;
+      : this.log.length;
 
     while (this.isLeader && !this.stopped) {
       const targetIndex = this.log.length - 1;
-      const numEntries = targetIndex - nextIndex;
+      const numEntries = Math.max(0, targetIndex - nextIndex + 1);
 
       debug(
-        "attempting to replicate %d entries from index %d",
+        "attempting to replicate %d entries from index %d (matchIndex=%s, targetIndex=%s)",
         numEntries,
-        nextIndex
+        nextIndex,
+        this.matchIndex.get(peer),
+        targetIndex
       );
 
       const reply = await this.rpc(peer, {
@@ -219,7 +244,7 @@ export class Raft {
         term,
         prevLogIndex: nextIndex - 1,
         prevLogTerm: this.getLogTerm(nextIndex - 1),
-        entries: this.log.slice(nextIndex, numEntries),
+        entries: this.log.slice(nextIndex),
         leaderCommit: this.commitIndex,
       });
 
@@ -456,6 +481,7 @@ export class Raft {
       }
     }
 
+    this.logSize.set(this.log.length);
     this.updateCommitIndex(request.leaderCommit);
 
     return {
@@ -464,3 +490,5 @@ export class Raft {
     };
   }
 }
+
+class NotLeader extends Error {}
