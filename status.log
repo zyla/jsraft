@@ -23,3 +23,11 @@ With current message passing implementation we only need to mock out timers, so 
 We can't test a simple scenario with a stable leader, because of course with random scheduling it's much more likely that a new election will take place.
 This could be worked around by disabling the election timer for all but one node. That would be a neat pattern - to test "normal" behavior separately from failure cases.
 
+2021-01-24 20:40 CET - Fixed the problem using the solution described above.
+I admit I like the random scheduling solution. We're now able to run an iteration of the test in less than a millisecond.
+
+2021-01-24 20:44 CET - There are several problems though:
+- We're not testing if the timeout values make sense. In fact, we're totally ignoring them - any timer can fire at any time. This is good for safety testing, but not "normal operation" testing.
+- We can't really use the passage of time. Maybe we could mock this based on the timers we fire?
+- A bit hard to debug, tooling could be better. For example there's no way right now to view logs from only one test iteration.
+
