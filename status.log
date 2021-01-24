@@ -17,3 +17,9 @@ At first I though about implementing DPOR, but now I think maybe a random schedu
 I think so - certainly we'll get more interleavings this way than with real timers.
 With current message passing implementation we only need to mock out timers, so it should be easy.
 
+2021-01-24 17:03 CET - Implementing scheduler
+
+2021-01-24 20:28 CET - Implemented random scheduling, but there is a problem.
+We can't test a simple scenario with a stable leader, because of course with random scheduling it's much more likely that a new election will take place.
+This could be worked around by disabling the election timer for all but one node. That would be a neat pattern - to test "normal" behavior separately from failure cases.
+

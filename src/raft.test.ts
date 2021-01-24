@@ -2,7 +2,7 @@ import debug from "debug";
 import delay from "delay";
 import { format, inspect } from "util";
 import { randomInRange, deepEquals } from "./utils";
-import { OVar, waitFor as observableWaitFor } from "./observable";
+import { OVar } from "./observable";
 import {
   Raft,
   Term,
@@ -15,6 +15,7 @@ import {
   Config,
   Address,
 } from "./raft";
+import { Scheduler } from './scheduler';
 
 class Cluster {
   private stopped = false;
@@ -173,50 +174,52 @@ function setupCluster(config: ClusterConfig = {}) {
   return new Cluster(addrs, config);
 }
 
-async function waitFor<T>(fn: () => T, timeout?: number): Promise<T> {
-  const result = await observableWaitFor(fn, timeout);
-  if (result === "timeout") {
-    throw new Error("waitFor: timeout waiting for " + fn);
+async function waitFor<T>(s: Scheduler, fn: () => T): Promise<T> {
+  let result;
+  let steps = 0;
+  while(!(result = fn())) {
+    if(steps++ >= 5000) {
+      throw new Error("waitForS: timeout waiting for " + fn);
+    }
+    await s.step();
+    if(s.finished()) {
+      throw new Error("waitForS(" + fn + "): process finished");
+    }
+    s.resumeRandom();
   }
   return result;
 }
 
+const deferred: (() => Promise<void> | void)[] = [];
+
+function defer(callback: () => Promise<void> | void) {
+  deferred.push(callback);
+}
+
+afterEach(flushDeferred);
+
+async function flushDeferred() {
+  let cb;
+  while(cb = deferred.pop()) {
+    await Promise.resolve(cb());
+  }
+}
+
 describe("Leader election", () => {
   it("works without network disruption", async () => {
-    const c = setupCluster();
-    const debug = c.logger.extend("test");
-    try {
-      await waitFor(() => c.checkAllLeaders(), 2 * maxElectionTimeout);
-    } finally {
-      c.stop();
-    }
-  });
-
-  it("works with many candidates", async () => {
-    // Set election timeouts such that they are very likely to fire at the same time
-    const c = setupCluster({
-      minElectionTimeout: 100,
-      maxElectionTimeout: 105,
-    });
-    const debug = c.logger.extend("test");
-    try {
-      const p = waitFor(() => {
-        const l = c.leader();
-        debug("LEADER: %s", l);
-        return l;
-      }, 3000);
-      waitFor(() => {
-        debug(
-          "leaders: %O, leader: %s",
-          c.servers.map((s) => [s.term, s.leader]),
-          c.leader()
-        );
-        return false;
-      });
-      await p;
-      await waitFor(() => c.checkAllLeaders(), 200);
-    } finally {
-      c.stop();
+    for(let i = 1; i <= 100; i++) {
+      try {
+        const s = new Scheduler;
+        s.install();
+        defer(async () => { await s.step(); s.uninstall() });
+        const c = setupCluster();
+        defer(() => c.stop());
+        const debug = c.logger.extend("test");
+        debug("========= ITERATION %d ==========", i);
+        await waitFor(s, () => c.checkAllLeaders());
+      } finally {
+        await flushDeferred();
+      }
     }
   });
 });
@@ -225,42 +228,49 @@ describe("Replication", () => {
   it("can replicate log entries", async () => {
     // In this test we only check that the logs are replicated - by directly inspecting logs on all the nodes.
     // Note that this doesn't look at state machine application, or even tracking the commit index.
+    for(let i = 1; i <= 100; i++) {
+      try {
+        const s = new Scheduler;
+        s.install();
+        defer(async () => { await s.step(); s.uninstall() });
+        const c = setupCluster();
+        defer(() => c.stop());
+        const debug = c.logger.extend("test");
+        debug("========= ITERATION %d ==========", i);
 
-    const c = setupCluster();
-    const debug = c.logger.extend("test");
-    try {
-      // Debug
-      waitFor(() => {
-        for (const s of c.servers) {
-          debug("%s: %O", s.address, s.getLog());
-        }
-      });
-
-      await waitFor(() => c.leader(), 2 * maxElectionTimeout);
-      const leader = c.server(c.leader()!);
-      const entry = await leader.propose("Hello");
-      // Leader should have the entry in the log immediately
-      const expectedLog = [[entry.term, "Hello"]];
-      expect(leader.getLog()).toEqual(expectedLog);
-
-      function waitForLogsToConverge() {
-        return waitFor(() => {
+        // Debug
+        OVar.waitFor(() => {
           for (const s of c.servers) {
-            if (!deepEquals(s.getLog(), expectedLog)) {
-              return false;
-            }
+            debug("%s: %O", s.address, s.getLog());
           }
-          return true;
-        }, 2 * heartbeatInterval);
-      }
-      await waitForLogsToConverge();
+        });
 
-      // Another entry
-      const entry2 = await leader.propose("World");
-      expectedLog.push([entry2.term, "World"]);
-      await waitForLogsToConverge();
-    } finally {
-      c.stop();
+        await waitFor(s, () => c.leader());
+        const leader = c.server(c.leader()!);
+        const entry = await leader.propose("Hello");
+        // Leader should have the entry in the log immediately
+        const expectedLog = [[entry.term, "Hello"]];
+        expect(leader.getLog()).toEqual(expectedLog);
+
+        function waitForLogsToConverge() {
+          return waitFor(s, () => {
+            for (const s of c.servers) {
+              if (!deepEquals(s.getLog(), expectedLog)) {
+                return false;
+              }
+            }
+            return true;
+          });
+        }
+        await waitForLogsToConverge();
+
+        // Another entry
+        const entry2 = await leader.propose("World");
+        expectedLog.push([entry2.term, "World"]);
+        await waitForLogsToConverge();
+      } finally {
+        await flushDeferred();
+      }
     }
   });
 });

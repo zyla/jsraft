@@ -248,7 +248,7 @@ export class Raft {
         leaderCommit: this.commitIndex,
       });
 
-      if (reply.term > this.currentTerm) {
+      if (reply.term > term) {
         this.updateTerm(reply.term);
         return;
       }
@@ -447,6 +447,10 @@ export class Raft {
     }
 
     this.leaderContact.set(this.leaderContact.get() + 1);
+
+    if(request.prevLogIndex < -1) {
+      throw new Error(`Invalid prevLogIndex: ${request.prevLogIndex}`);
+    }
 
     if (
       request.prevLogIndex > 0 &&
