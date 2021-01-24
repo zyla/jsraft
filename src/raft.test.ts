@@ -56,6 +56,9 @@ class Cluster {
     let term = 0;
     let leader: Address | null = null;
     for (const s of this.servers) {
+      // NOTE: the order here matters.
+      // `s.isLeader` reads an OVar, but `s.term` doesn't.
+      // Therefore if we fail the term check, we don't register any OVar dependencies!
       if (s.isLeader && s.term > term) {
         term = s.term;
         leader = s.address;
