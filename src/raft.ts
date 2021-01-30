@@ -30,6 +30,7 @@ export class TransportError extends Error {}
 export interface Logger {
   (formatter: any, ...args: any[]): void;
   extend: (namespace: string) => Logger;
+  enabled: boolean;
 }
 
 export type Config = {

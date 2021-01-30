@@ -134,13 +134,17 @@ export class MemTransport {
       throw new TransportError("unknown_address");
     }
     await delay(randomInRange(0, 10));
-    this.logger("%s->%s %s", this.myAddress, to, JSON.stringify(request));
+    if(this.logger.enabled) {
+      this.logger("%s->%s %s", this.myAddress, to, JSON.stringify(request));
+    }
     const response = await otherNode.receiver.handleMessage(
       this.myAddress,
       request
     );
     await delay(randomInRange(0, 10));
-    this.logger("%s->%s %s", to, this.myAddress, JSON.stringify(response));
+    if(this.logger.enabled) {
+      this.logger("%s->%s %s", to, this.myAddress, JSON.stringify(response));
+    }
     return response;
   }
 }

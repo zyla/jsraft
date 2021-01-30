@@ -32,12 +32,13 @@ export class OVar<T> {
     return this.listeners.length;
   }
 
-  private static collectingVarsToWatch: Map<number, OVar<any>> | null = null;
+  private static collectingVarsToWatch: boolean = false;
+  private static varsToWatch: Map<number, OVar<any>> = new Map;
 
   get() {
     if (OVar.collectingVarsToWatch) {
       OVar.logger("adding %s to deps", this.describe());
-      OVar.collectingVarsToWatch.set(this.id, this);
+      OVar.varsToWatch.set(this.id, this);
     }
     return this.value;
   }
@@ -59,19 +60,24 @@ export class OVar<T> {
     if (OVar.collectingVarsToWatch) {
       throw new Error("Already collecting dependencies");
     }
-    OVar.collectingVarsToWatch = new Map();
+    OVar.collectingVarsToWatch = true;
     try {
-      OVar.logger("evaluating %s", fn);
+      if(OVar.logger.enabled) {
+        OVar.logger("evaluating %s", fn);
+      }
       const value = fn();
-      const deps = Array.from(OVar.collectingVarsToWatch.values());
-      OVar.logger(
-        "evaluated %s deps: %O",
-        fn,
-        deps.map((v) => v.describe())
-      );
+      const deps = Array.from(OVar.varsToWatch.values());
+      if(OVar.logger.enabled) {
+        OVar.logger(
+          "evaluated %s deps: %O",
+          fn,
+          deps.map((v) => v.describe())
+        );
+      }
       return [value, deps];
     } finally {
-      OVar.collectingVarsToWatch = null;
+      OVar.collectingVarsToWatch = false;
+      OVar.varsToWatch.clear();
     }
   }
 
