@@ -31,3 +31,7 @@ I admit I like the random scheduling solution. We're now able to run an iteratio
 - We can't really use the passage of time. Maybe we could mock this based on the timers we fire?
 - A bit hard to debug, tooling could be better. For example there's no way right now to view logs from only one test iteration.
 
+2021-01-30 11:57 CET - Adding test for leader log completeness condition during election
+
+2021-02-07 12:27 CET - Simpler test yet - does election even work with one disconnected node?
+

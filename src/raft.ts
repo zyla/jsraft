@@ -46,7 +46,7 @@ export type Config = {
 
   logger: Logger;
 
-  /* For tests: disable election timer. */
+  /* For tests: disable elections. */
   electionDisabled?: boolean;
 };
 
@@ -100,8 +100,12 @@ export class Raft {
   private votedFor: Address | null = null;
   private _stopped = new OVar(false);
 
+  private electionDisabled = new OVar(false);
+
   constructor(private config: Config) {
     this.transport.setReceiver(this);
+
+    this.electionDisabled.set(!!config.electionDisabled);
 
     this._leader.name = `${this.me}.leader`;
     this.leaderContact.name = `${this.me}.leaderContact`;
@@ -294,13 +298,8 @@ export class Raft {
   private async electionTask() {
     const debug = this.debug.extend("electionTask");
 
-    if(this.config.electionDisabled) {
-      debug("Election disabled for this node");
-      return;
-    }
-
     while (true) {
-      await waitFor(() => !this.isLeader || this.stopped);
+      await waitFor(() => (!this.isLeader && !this.electionDisabled.get()) || this.stopped);
       if (this.stopped) {
         return;
       }
