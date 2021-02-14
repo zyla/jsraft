@@ -306,6 +306,25 @@ describe("Leader election", () => {
       }
     }
   });
+
+  test("can reelect a leader", async () => {
+    for(let i = 1; i <= ITERATIONS; i++) {
+      try {
+        const s = new Scheduler;
+        s.install();
+        defer(async () => { await s.step(); s.uninstall() });
+        const c = setupCluster();
+        defer(() => c.stop());
+        const debug = c.logger.extend("test");
+        debug("========= ITERATION %d ==========", i);
+        const firstLeader = await waitFor(s, () => c.leader(), c.logger);
+        c.disconnect(firstLeader!);
+        await waitFor(s, () => c.leader() !== firstLeader, c.logger);
+      } finally {
+        await flushDeferred();
+      }
+    }
+  });
 });
 
 describe("Replication", () => {

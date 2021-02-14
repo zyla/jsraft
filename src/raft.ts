@@ -320,12 +320,13 @@ export class Raft {
         continue;
       }
 
-      while (!this.leader) {
+      do {
         if (this.stopped) {
           return;
         }
 
         const term = ++this.currentTerm;
+        this._leader.set(null);
         this.votedFor = this.me;
         const neededVotes = Math.floor(this.config.servers.length / 2) + 1;
         const numVotes = new OVar(1, `${this.me}.numVotes[term=${term}]`);
@@ -375,7 +376,7 @@ export class Raft {
           debug("got needed votes, becoming leader in term %d", term);
           this.becomeLeader();
         }
-      }
+      } while (!this.leader);
     }
   }
 
