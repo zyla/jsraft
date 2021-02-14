@@ -39,3 +39,5 @@ I admit I like the random scheduling solution. We're now able to run an iteratio
 
 2021-02-14 15:31 CET - Just implemented message drop as hanging indefinitely. But now the replication task will stop once there is any disruption. What to do?
 
+2021-02-14 17:00 CET - Note to self: need to add another test: 'Can reelect a leader'
+

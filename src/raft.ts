@@ -100,7 +100,7 @@ export class Raft {
   private votedFor: Address | null = null;
   private _stopped = new OVar(false);
 
-  private electionDisabled = new OVar(false);
+  public readonly electionDisabled = new OVar(false);
 
   constructor(private config: Config) {
     this.transport.setReceiver(this);
@@ -303,6 +303,7 @@ export class Raft {
       if (this.stopped) {
         return;
       }
+      debug('waiting for leader contact');
       const lastLeaderContact = this.leaderContact.get();
       const result = await waitFor(() => {
         if (this.stopped) {
