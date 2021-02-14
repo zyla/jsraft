@@ -35,3 +35,7 @@ I admit I like the random scheduling solution. We're now able to run an iteratio
 
 2021-02-07 12:27 CET - Simpler test yet - does election even work with one disconnected node?
 
+2021-02-14 15:18 CET - Simpler test - another attempt
+
+2021-02-14 15:31 CET - Just implemented message drop as hanging indefinitely. But now the replication task will stop once there is any disruption. What to do?
+

@@ -58,7 +58,11 @@ class Cluster {
     return this.servers.find((s) => s.address === addr)!;
   }
 
-  leader() {
+  leader(): Address | null {
+    return this.leaderWithTerm()[0];
+  }
+
+  leaderWithTerm(): [Address | null, number | null] {
     let term = 0;
     let leader: Address | null = null;
     for (const s of this.servers) {
@@ -70,9 +74,13 @@ class Cluster {
         leader = s.address;
       }
     }
-    return leader;
+    return [leader, term];
   }
 
+  /**
+   * Returns the latest term on all nodes.
+   * Note: the term may not have a leader, and so is different from the term returned by `leaderWithTerm`.
+   */
   get term() {
     let term = 0;
     for (const s of this.servers) {
@@ -89,14 +97,17 @@ class Cluster {
     }
   }
 
+  checkAllLeaders() {
+    return this.checkNLeaders(this.servers.length);
+  }
+
   /**
-   * Check if all nodes know a leader.
+   * Check if at least `n` servers know the leader for the latest term.
    * Returns true if so.
    * Throws an error if any node knows a different leader.
    */
-  checkAllLeaders() {
-    const leader = this.leader();
-    const term = this.term;
+  checkNLeaders(n: number) {
+    const [leader, term] = this.leaderWithTerm();
     if (!leader) {
       return false;
     }
@@ -111,14 +122,16 @@ class Cluster {
         "Not all nodes know the same leader: " + inspect(leaders)
       );
     }
-    return this.servers.every((s) => s.leader);
+    return this.servers.filter((s) => s.leader === leader && s.term === term).length >= n;
   }
 
   connect(addr: Address) {
+    this.logger('connecting ' + addr);
     this.net.connect(addr);
   }
 
   disconnect(addr: Address) {
+    this.logger('disconnecting ' + addr);
     this.net.disconnect(addr);
   }
 }
@@ -141,6 +154,12 @@ export class MemTransport {
     if (!otherNode) {
       throw new TransportError("unknown_address");
     }
+    if(!this.net.connections.has(toConnectionKey(this.myAddress, to))) {
+      if(this.logger.enabled) {
+        this.logger("DROPPED %s->%s %s", this.myAddress, to, JSON.stringify(request));
+      }
+      return await new Promise(() => {});
+    }
     await delay(randomInRange(0, 10));
     if(this.logger.enabled) {
       this.logger("%s->%s %s", this.myAddress, to, JSON.stringify(request));
@@ -149,6 +168,12 @@ export class MemTransport {
       this.myAddress,
       request
     );
+    if(!this.net.connections.has(toConnectionKey(to, this.myAddress))) {
+      if(this.logger.enabled) {
+        this.logger("DROPPED %s->%s %s", to, this.myAddress, JSON.stringify(response));
+      }
+      return await new Promise(() => {});
+    }
     await delay(randomInRange(0, 10));
     if(this.logger.enabled) {
       this.logger("%s->%s %s", to, this.myAddress, JSON.stringify(response));
@@ -212,16 +237,19 @@ function setupCluster(config: ClusterConfig = {}) {
   return new Cluster(addrs, config);
 }
 
-async function waitFor<T>(s: Scheduler, fn: () => T): Promise<T> {
+async function waitFor<T>(s: Scheduler, fn: () => T, logger?: Logger): Promise<T> {
   let result;
   let steps = 0;
   while(!(result = fn())) {
     if(steps++ >= 5000) {
-      throw new Error("waitForS: timeout waiting for " + fn);
+      if(logger) {
+        logger("waitFor: timeout waiting for " + fn);
+      }
+      throw new Error("waitFor: timeout waiting for " + fn);
     }
     await s.step();
     if(s.finished()) {
-      throw new Error("waitForS(" + fn + "): process finished");
+      throw new Error("waitFor(" + fn + "): process finished");
     }
     s.resumeRandom();
   }
@@ -243,21 +271,41 @@ async function flushDeferred() {
   }
 }
 
-test("Leader election", async () => {
-  for(let i = 1; i <= ITERATIONS; i++) {
-    try {
-      const s = new Scheduler;
-      s.install();
-      defer(async () => { await s.step(); s.uninstall() });
-      const c = setupCluster();
-      defer(() => c.stop());
-      const debug = c.logger.extend("test");
-      debug("========= ITERATION %d ==========", i);
-      await waitFor(s, () => c.checkAllLeaders());
-    } finally {
-      await flushDeferred();
+describe("Leader election", () => {
+  test("with all nodes", async () => {
+    for(let i = 1; i <= ITERATIONS; i++) {
+      try {
+        const s = new Scheduler;
+        s.install();
+        defer(async () => { await s.step(); s.uninstall() });
+        const c = setupCluster();
+        defer(() => c.stop());
+        const debug = c.logger.extend("test");
+        debug("========= ITERATION %d ==========", i);
+        await waitFor(s, () => c.checkAllLeaders());
+      } finally {
+        await flushDeferred();
+      }
     }
-  }
+  });
+
+  test("with one faulty node", async () => {
+    for(let i = 1; i <= ITERATIONS; i++) {
+      try {
+        const s = new Scheduler;
+        s.install();
+        defer(async () => { await s.step(); s.uninstall() });
+        const c = setupCluster();
+        defer(() => c.stop());
+        const debug = c.logger.extend("test");
+        debug("========= ITERATION %d ==========", i);
+        c.disconnect("s3");
+        await waitFor(s, () => c.checkNLeaders(2), c.logger);
+      } finally {
+        await flushDeferred();
+      }
+    }
+  });
 });
 
 describe("Replication", () => {
@@ -346,7 +394,6 @@ describe("Replication", () => {
           });
         }
         await waitForLogsToConverge();
-        debug('disconnecting');
         c.disconnect("s3");
 
         debug('proposing 2');

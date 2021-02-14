@@ -35,7 +35,14 @@ export class Scheduler {
     process.nextTick = this.nextTick.bind(this);
     (Promise.prototype as any).then = function(onSuccess: (value: any) => any, onError: (value: any) => any) {
       return s.oldPromiseThen.call(this,
-        value => s.nextTick(() => onSuccess(value)),
+        value => s.nextTick(() => {
+          try {
+            onSuccess(value);
+          } catch(e) {
+            console.error('promise error', e);
+            onError(e);
+          }
+        }),
         value => s.nextTick(() => onError(value))
       );
     };
@@ -75,6 +82,10 @@ export class Scheduler {
     timer.callback();
   }
 }
+
+process.on('unhandledRejection', error => {
+  console.log('unhandledRejection', error);
+});
 
 class Timer {
   constructor(public callback: () => void) {}
