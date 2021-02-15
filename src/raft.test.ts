@@ -432,6 +432,61 @@ describe("Replication", () => {
     }
   });
 
+  it("won't elect leader with empty log", async () => {
+    for(let i = 1; i <= ITERATIONS; i++) {
+      try {
+        const s = new Scheduler;
+        s.install();
+        defer(async () => { await s.step(); s.uninstall() });
+        const c = setupCluster({ oneLeader: true });
+        defer(() => c.stop());
+        const debug = c.logger.extend("test");
+        debug("========= ITERATION %d ==========", i);
+
+        // Debug
+        OVar.waitFor(() => {
+          for (const s of c.servers) {
+            debug("%s: %O", s.address, s.getLog());
+          }
+        });
+
+        c.disconnect("s3");
+
+        await waitFor(s, () => c.leader());
+        const leader = c.server(c.leader()!);
+
+        debug('proposing 2');
+
+        // Another entry, but without one node
+        const entry2 = await leader.propose("World");
+        const expectedLog = [[entry2.term, "World"]];
+        function waitForLogsToConverge(servers: Raft[] = c.servers) {
+          return waitFor(s, () => {
+            for (const s of servers) {
+              if (!deepEquals(s.getLog(), expectedLog)) {
+                return false;
+              }
+            }
+            return true;
+          });
+        }
+        await waitForLogsToConverge([c.server("s2")]);
+
+        debug('forcing reelection');
+
+        c.server('s2')!.electionDisabled.set(false);
+//        c.server('s3')!.electionDisabled.set(false);
+
+        c.disconnect('s1');
+        c.connect('s3');
+        await waitFor(s, () => c.leader() !== 's1', c.logger);
+        expect(await waitFor(s, () => c.leader(), c.logger)).toEqual('s2');
+      } finally {
+        await flushDeferred();
+      }
+    }
+  });
+
   it("won't elect leader with incomplete log", async () => {
     for(let i = 1; i <= ITERATIONS; i++) {
       try {
@@ -484,7 +539,7 @@ describe("Replication", () => {
         c.server('s2')!.electionDisabled.set(false);
         c.server('s3')!.electionDisabled.set(false);
         await waitFor(s, () => c.leader() !== 's1', c.logger);
-        expect(c.leader()).toEqual('s2');
+        expect(await waitFor(s, () => c.leader(), c.logger)).toEqual('s2');
       } finally {
         await flushDeferred();
       }

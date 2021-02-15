@@ -399,6 +399,20 @@ export class Raft {
     }
   }
 
+  private isCandidateUpToDate(lastLogIndex: number, lastLogTerm: number): boolean {
+    if(this.log.length === 0) {
+      return true;
+    }
+    if(lastLogIndex === -1) {
+      return false;
+    }
+    if(lastLogIndex < this.log.length) {
+      return lastLogTerm >= this.log[lastLogIndex][TERM];
+    } else {
+      return true;
+    }
+  }
+
   private async handleRequestVote(
     from: Address,
     request: RequestVote
@@ -408,6 +422,14 @@ export class Raft {
     }
 
     if (request.term < this.currentTerm) {
+      return {
+        term: this.currentTerm,
+        granted: false,
+      };
+    }
+
+    if (!this.isCandidateUpToDate(request.lastLogIndex, request.lastLogTerm)) {
+      this.debug("not voting for %s in term %d: not up to date", from, this.currentTerm);
       return {
         term: this.currentTerm,
         granted: false,
