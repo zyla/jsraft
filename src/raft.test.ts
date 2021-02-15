@@ -542,7 +542,8 @@ describe("Replication", () => {
         c.server('s2')!.electionDisabled.set(false);
         c.server('s3')!.electionDisabled.set(false);
         await waitFor(s, () => c.leader() !== 's1', c.logger);
-        expect(await waitFor(s, () => c.leader(), c.logger)).toEqual('s2');
+        await waitFor(s, () => c.checkNLeaders(2), c.logger);
+        expect(c.leader()).toEqual('s2');
       } finally {
         await flushDeferred();
       }

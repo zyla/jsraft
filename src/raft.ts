@@ -406,14 +406,13 @@ export class Raft {
     if(this.log.length === 0) {
       return true;
     }
-    if(lastLogIndex === -1) {
-      return false;
-    }
-    if(lastLogIndex < this.log.length) {
-      return lastLogTerm >= this.log[lastLogIndex][TERM];
-    } else {
+    if(lastLogTerm > this.log[this.log.length - 1][TERM]) {
       return true;
     }
+    if(lastLogTerm < this.log[this.log.length - 1][TERM]) {
+      return false;
+    }
+    return lastLogIndex >= this.log.length - 1;
   }
 
   private async handleRequestVote(
