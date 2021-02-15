@@ -30,6 +30,12 @@ describe("waitFor", () => {
     const v = new OVar(false);
     expect(await waitFor(() => v.get(), 100)).toEqual("timeout");
   });
+  it("can time out even after notification", async () => {
+    const v = new OVar(false);
+    const p = waitFor(() => v.get(), 100);
+    v.set(false);
+    expect(await p).toEqual("timeout");
+  });
   it("doesn't leak listeners after timeout", async () => {
     const v = new OVar(false);
     await waitFor(() => v.get(), 100);

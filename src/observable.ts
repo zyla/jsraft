@@ -109,14 +109,14 @@ export class OVar<T> {
       try {
         if (value) {
           OVar.logger("waitFor %s finished with %O", fn, value);
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           return value;
         }
         let scheduled = false;
         await new Promise((resolve) => {
           listener = () => {
-            if (timeoutId && !timedOut) {
-              clearTimeout(timeoutId);
-            }
             if (!scheduled) {
               scheduled = true;
               resolve(void 0);
