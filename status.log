@@ -41,3 +41,5 @@ I admit I like the random scheduling solution. We're now able to run an iteratio
 
 2021-02-14 17:00 CET - Note to self: need to add another test: 'Can reelect a leader'
 
+2021-02-15 14:13 CET - "can reelect a leader" fails: waitFor(() => c.leader() !== firstLeader): process finished
+

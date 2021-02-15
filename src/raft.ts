@@ -307,11 +307,14 @@ export class Raft {
       const lastLeaderContact = this.leaderContact.get();
       const result = await waitFor(() => {
         if (this.stopped) {
+          debug('stopped');
           return "stop";
         }
         if (this.isLeader || this.leaderContact.get() > lastLeaderContact) {
+          debug('got contact from leader');
           return "continue";
         }
+        debug('still waiting');
       }, randomInRange(this.config.minElectionTimeout, this.config.maxElectionTimeout));
       if (result === "stop") {
         return;

@@ -254,6 +254,9 @@ async function waitFor<T>(s: Scheduler, fn: () => T, logger?: Logger): Promise<T
     }
     await s.step();
     if(s.finished()) {
+      if(logger) {
+        logger("waitFor(" + fn + "): process finished");
+      }
       throw new Error("waitFor(" + fn + "): process finished");
     }
     s.resumeRandom();
