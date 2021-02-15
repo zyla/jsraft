@@ -138,6 +138,7 @@ class Cluster {
 
 export class MemTransport {
   private receiver: Receiver = new NullReceiver();
+  public connected: boolean = true;
 
   constructor(
     private net: MemNetwork,
@@ -154,13 +155,13 @@ export class MemTransport {
     if (!otherNode) {
       throw new TransportError("unknown_address");
     }
+    await delay(randomInRange(0, 10));
     if(!this.net.connections.has(toConnectionKey(this.myAddress, to))) {
       if(this.logger.enabled) {
         this.logger("DROPPED %s->%s %s", this.myAddress, to, JSON.stringify(request));
       }
       return await new Promise(() => {});
     }
-    await delay(randomInRange(0, 10));
     if(this.logger.enabled) {
       this.logger("%s->%s %s", this.myAddress, to, JSON.stringify(request));
     }
@@ -168,13 +169,13 @@ export class MemTransport {
       this.myAddress,
       request
     );
+    await delay(randomInRange(0, 10));
     if(!this.net.connections.has(toConnectionKey(to, this.myAddress))) {
       if(this.logger.enabled) {
         this.logger("DROPPED %s->%s %s", to, this.myAddress, JSON.stringify(response));
       }
       return await new Promise(() => {});
     }
-    await delay(randomInRange(0, 10));
     if(this.logger.enabled) {
       this.logger("%s->%s %s", to, this.myAddress, JSON.stringify(response));
     }
@@ -194,13 +195,17 @@ export class MemNetwork {
   }
 
   connect(addr: Address) {
+    this.nodes.get(addr)!.connected = true;
     for (const addr2 of this.addrs) {
-      this.connections.add(toConnectionKey(addr, addr2));
-      this.connections.add(toConnectionKey(addr2, addr));
+      if(this.nodes.has(addr2) && this.nodes.get(addr2)!.connected) {
+        this.connections.add(toConnectionKey(addr, addr2));
+        this.connections.add(toConnectionKey(addr2, addr));
+      }
     }
   }
 
   disconnect(addr: Address) {
+    this.nodes.get(addr)!.connected = false;
     for (const addr2 of this.addrs) {
       this.connections.delete(toConnectionKey(addr, addr2));
       this.connections.delete(toConnectionKey(addr2, addr));
